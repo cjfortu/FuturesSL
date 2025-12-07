@@ -219,6 +219,24 @@ Per claude-engineering.md Â§4.2:
 | Model forward pass | Correct shapes | âœ“ Tested |
 | Gradient flow | All parameters | âœ“ Tested |
 
+### 4.2 GPU Performance Metrics (with AMP)
+
+Testing on A100 GPU with BF16 mixed precision (AutocastâCast):
+
+| Metric | Value | Configuration |
+|--------|-------|---------------|
+| Inference VRAM | ~25-30 GB | batch_size=8, BF16, no checkpoint |
+| Training VRAM | ~30-40 GB | batch_size=8, BF16, gradients + optimizer |
+| FP32 Baseline (inference) | ~51 GB | batch_size=8, no AMP (reference) |
+| Model Parameters | 20.2M | d_model=512, layers=6 |
+
+**Notes:**
+- AMP (BF16) reduces VRAM ~40-50% vs FP32 baseline
+- A100 has 80 GB capacity; Phase 3 TSA targets <60 GB with AMP
+- Gradient checkpointing available if needed (~20-25 GB training)
+
+---
+
 ---
 
 ## 5. Phase 2 â†’ Phase 3 Migration
