@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Data files (too large for GitHub)
+data/raw/*.parquet
+data/processed/*.parquet
+*.csv
+*.h5
+*.hdf5
+
+# Model checkpoints
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# API Keys (CRITICAL - keep private!)
+*config*key*.py
+secrets/
+.env
+
+# Google Drive mount points
+/content/
+
+# Temporary files
+*.tmp
+*.bak
