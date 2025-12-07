@@ -35,9 +35,9 @@ This multi-AI approach ensures rigorous peer review at each stage, from research
 
 The project maintains three authoritative documents:
 
-1. **[gemini-research.md](gemini-research.md)**: Research guide covering transformer architectures, positional encoding for financial time series, distributional forecasting methods, and references to source literature
-2. **[grok-scientific.md](grok-scientific.md)**: Scientific blueprint translating research into mathematical formulations, algorithmic strategies, and testable hypotheses
-3. **[claude-engineering.md](claude-engineering.md)**: Engineering implementation guide with PyTorch specifications, module designs, and phased development plan
+1. **[gemini-research.md](docs/gemini-research.md)**: Research guide covering transformer architectures, positional encoding for financial time series, distributional forecasting methods, and references to source literature
+2. **[grok-scientific.md](docs/grok-scientific.md)**: Scientific blueprint translating research into mathematical formulations, algorithmic strategies, and testable hypotheses
+3. **[claude-engineering.md](docs/claude-engineering.md)**: Engineering implementation guide with PyTorch specifications, module designs, and phased development plan
 
 ### System Components
 
@@ -61,9 +61,9 @@ The project maintains three authoritative documents:
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         MODEL                                       │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Input → InstanceNorm → GroupProjection → PositionalEmbed          │
+│  Input → InstanceNorm → Linear → PositionalEmbed                   │
 │                              ↓                                      │
-│                    TSA+LGU Encoder Blocks                          │
+│                    Transformer Encoder Blocks                       │
 │                              ↓                                      │
 │              Multi-Horizon Quantile Prediction Heads                │
 └─────────────────────────────────────────────────────────────────────┘
@@ -74,25 +74,24 @@ The project maintains three authoritative documents:
 The core architecture processes input through the following stages:
 
 1. **Instance Normalization**: Per-sample, per-feature normalization across time to enforce stationarity
-2. **Group Projection**: 24 raw features projected into 6 semantic groups (price, volume, trend, momentum, volatility, flow)
+2. **Feature Embedding**: Linear projection of 24 raw features to d_model=512 dimensions
 3. **Positional Encoding**: Cyclical temporal embeddings + learnable day-of-week embeddings
-4. **TSA Encoder**: 8-12 stacked blocks, each containing:
-   - Temporal attention (per variable, across time)
-   - Variable attention (per timestep, across features)
-   - Lite Gate Units for noise filtering
-   - Feed-forward networks
-5. **Autoregressive Heads**: Multi-horizon quantile regression heads where shorter horizons condition longer ones
+4. **Transformer Encoder**: 6-layer encoder with multi-head attention
+   - *Phase 3 will replace with TSA (Temporal + Variable attention) + LGU blocks*
+5. **Quantile Heads**: Multi-horizon quantile regression heads
+   - *Phase 3 will add autoregressive conditioning between horizons*
 
 **Key Specifications:**
 - Sequence Length: T_max = 7,000 (padded)
 - Model Dimension: d = 512
-- Attention Heads: 8 per stage
+- Attention Heads: 8
+- Encoder Layers: 6 (Phase 2 baseline)
 - Quantiles: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
 - Horizons: [5, 15, 30, 60, 120, 240] minutes
 
-## Current Status: Dev Phase 1 Complete ✓
+## Current Status: Dev Phase 2 Complete ✓
 
-### Implemented Components
+### Phase 1: Data Acquisition and Feature Engineering ✓
 
 **Data Acquisition Module** (`src/data/acquisition.py`):
 - Databento Historical API integration with NQ.v.0 (volume-based rollover)
@@ -112,22 +111,7 @@ The core architecture processes input through the following stages:
 - Instance normalization support (per-sample statistics)
 - Vectorized computation for efficiency
 
-**Testing Infrastructure** (`phase1_tests.ipynb`):
-- Comprehensive unit tests for all 24 features
-- Integration tests for end-to-end pipeline
-- Validation of computational correctness
-- Performance benchmarking
-
-### Critical Bug Fixes
-
-Through multi-AI peer review, the following issues were identified and resolved:
-
-1. **VWAP Calculation Error**: Fixed numerator aggregation to prevent look-ahead bias
-2. **Money Flow Index Computation**: Corrected typical price calculation and positive/negative flow logic
-3. **Dataset Boundary Handling**: Eliminated potential future data leakage in rolling window construction
-
-### Data Coverage
-
+**Data Coverage:**
 - **Period**: June 6, 2010 - December 3, 2025 (15.5 years)
 - **Resolution**: 1-minute OHLCV bars
 - **Contract**: NQ.v.0 (volume-based continuous)
@@ -135,6 +119,36 @@ Through multi-AI peer review, the following issues were identified and resolved:
   - Training: 2010-06-06 to 2019-12-31 (~9.5 years)
   - Validation: 2020-01-01 to 2022-12-31 (3 years)
   - Test: 2023-01-01 to 2025-12-03 (~3 years)
+
+### Phase 2: Dataset and Baseline Model ✓
+
+**Dataset Module** (`src/data/dataset.py`):
+- `NQFuturesDataset`: Rolling window dataset with proper padding/masking
+- Window strategy: ~6900 bars context, right-padded to T_max=7000
+- Train stride: 60 bars (hourly non-overlapping samples)
+- Val/Test stride: 1 bar (full sequential coverage)
+- Temporal features: 8-channel encoding for cyclical positional embeddings
+- Automatic normalization statistics handling
+- Efficient batch generation with DataLoader utilities
+
+**Baseline Model** (`src/model/baseline.py`):
+- `InstanceNorm1d`: Per-sample, per-feature normalization with attention masking
+- `CyclicalPositionalEncoding`: Time-of-day, day-of-week, day-of-month, day-of-year
+- `BaselineTransformer`: Vanilla encoder with independent quantile heads (Phase 2)
+- Forward pass validated: (B, T=7000, V=24) → (B, H=6, Q=7)
+- Gradient flow tested: All parameters receive gradients
+- Memory efficient: <40GB VRAM on A100 with batch_size=8
+
+**Testing Infrastructure**:
+- `tests/phase1_tests.ipynb`: Data acquisition and feature engineering validation
+- `tests/phase2_tests.ipynb`: Dataset, model, and integration tests
+- Comprehensive unit tests for all components
+- Performance benchmarking and shape validation
+
+**Critical Issues Resolved:**
+- Timezone handling: Converted timestamps to naive (market-local time) for consistency
+- Feature normalization: Proper handling of NaN values and padding
+- Sequence boundary handling: Eliminated future data leakage
 
 ## Installation
 
@@ -154,30 +168,39 @@ pip install databento pandas numpy pyarrow torch scipy tqdm
 
 ```
 FuturesSL/
-├── data/
-│   ├── __init__.py
-│   ├── acquisition.py          # Databento download module
-│   └── features.py              # Technical indicator computation
+├── docs/
+│   ├── gemini-research.md           # Research guide
+│   ├── grok-scientific.md           # Scientific blueprint
+│   ├── claude-engineering.md        # Engineering specifications
+│   ├── phase1_documentation.md      # Phase 1 implementation notes
+│   └── phase2_documentation.md      # Phase 2 implementation notes
 ├── src/
-│   └── __init__.py
-├── gemini-research.md           # Research guide
-├── grok-scientific.md           # Scientific blueprint
-├── claude-engineering.md        # Engineering specifications
-├── phase1_tests.ipynb           # Dev Phase 1 testing notebook
-├── futuresSL_prob-statement.txt # Original problem statement
+│   ├── __init__.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── acquisition.py           # Databento download module
+│   │   ├── features.py              # Technical indicator computation
+│   │   └── dataset.py               # PyTorch Dataset/DataLoader (Phase 2)
+│   └── model/
+│       ├── __init__.py
+│       └── baseline.py              # Baseline Transformer (Phase 2)
+├── tests/
+│   ├── phase1_tests.ipynb           # Phase 1 testing notebook
+│   └── phase2_tests.ipynb           # Phase 2 testing notebook (Colab)
+├── futuresSL_prob-statement.txt     # Original problem statement
 └── README.md
 ```
 
 ## Usage
 
-### Data Acquisition
+### Data Acquisition (Phase 1)
 
 ```python
-from data.acquisition import NQDataAcquisition, DatabentoConfig
+from src.data.acquisition import NQDataAcquisition
 
 # Initialize acquisition module
 acquisition = NQDataAcquisition(
-    api_key=DatabentoConfig.API_KEY,
+    api_key="your_databento_key",
     output_dir="./data/raw"
 )
 
@@ -192,10 +215,10 @@ df = acquisition.download_range("2020-01-01", "2020-12-31")
 acquisition.save_parquet(df, "nq_2020.parquet")
 ```
 
-### Feature Engineering
+### Feature Engineering (Phase 1)
 
 ```python
-from data.features import NQFeatureEngineer
+from src.data.features import NQFeatureEngineer, FEATURE_COLUMNS
 import pandas as pd
 
 # Load raw data
@@ -207,59 +230,112 @@ engineer = NQFeatureEngineer()
 # Compute all 24 features
 features_df = engineer.compute_all_features(df)
 
-# Save processed features
+# Compute forward return targets
+targets_df = engineer.compute_targets(df)
+
+# Save processed data
 features_df.to_parquet("./data/processed/nq_features_2020.parquet")
+targets_df.to_parquet("./data/processed/nq_targets_2020.parquet")
+
+print(f"Feature columns: {FEATURE_COLUMNS}")
+print(f"Feature shape: {features_df.shape}")
+```
+
+### Dataset and Model (Phase 2)
+
+```python
+from src.data import create_dataloaders, FEATURE_COLUMNS
+from src.model import create_model
+import torch
+
+# Create dataloaders
+train_loader, val_loader, test_loader = create_dataloaders(
+    features_path='data/nq_features_v1.parquet',
+    targets_path='data/nq_targets_v1.parquet',
+    feature_columns=FEATURE_COLUMNS,
+    batch_size=8,
+)
+
+# Create baseline model
+model = create_model(num_features=24, d_model=512).cuda()
+
+# Forward pass
+for batch in train_loader:
+    features = batch['features'].cuda()
+    mask = batch['mask'].cuda()
+    temporal = batch['temporal_features'].cuda()
+    targets = batch['targets'].cuda()
+    
+    # Model prediction: (B, 6, 7) = (batch, horizons, quantiles)
+    predictions = model(features, mask, temporal)
+    
+    print(f"Input shape: {features.shape}")       # (8, 7000, 24)
+    print(f"Output shape: {predictions.shape}")   # (8, 6, 7)
+    break
 ```
 
 ### Running Tests (Colab)
 
-1. Upload `phase1_tests.ipynb` to Google Colab
+**Phase 1 Tests:**
+1. Upload `tests/phase1_tests.ipynb` to Google Colab
 2. Connect to A100 GPU runtime
 3. Mount Google Drive
 4. Run all cells sequentially
 
-Expected output: All tests passing with performance metrics for each feature computation.
+**Phase 2 Tests:**
+1. Upload `tests/phase2_tests.ipynb` to Google Colab
+2. Connect to A100 GPU runtime  
+3. Ensure Phase 1 data is available in Drive
+4. Run all cells sequentially
+
+Expected output: All tests passing with validation metrics.
 
 ## Development Roadmap
 
 ### Phase 1: Data Acquisition and Feature Engineering ✓ COMPLETE
 - ✓ Databento API integration
 - ✓ Volume-based rollover handling
-- ✓ 24 technical indicators
-- ✓ Comprehensive testing
+- ✓ 24 technical indicators with proper session handling
+- ✓ Comprehensive unit and integration tests
 
-### Phase 2: Dataset and DataLoader (Weeks 1-2)
-- Rolling window sampler with padding/masking
-- Positional encoding computation
-- Train/val/test splits
-- Efficient batching for A100
+### Phase 2: Dataset and Baseline Model ✓ COMPLETE
+- ✓ Rolling window sampler with padding/masking
+- ✓ Cyclical positional encoding computation
+- ✓ Train/val/test splits with proper striding
+- ✓ Instance normalization layer
+- ✓ Baseline Transformer encoder
+- ✓ Independent multi-horizon quantile heads
+- ✓ Forward pass and gradient flow validation
 
-### Phase 3: Model Architecture (Weeks 3-4)
-- Instance normalization layer
-- Group projection module
-- Two-stage attention blocks
-- Lite gate units
-- Multi-horizon quantile heads
+### Phase 3: TSA + LGU Architecture (In Progress)
+- [ ] Two-Stage Attention: Temporal + Variable attention blocks
+- [ ] Lite Gate Units for noise filtering
+- [ ] Group projection (6 semantic feature groups)
+- [ ] Autoregressive multi-horizon heads with teacher forcing
+- [ ] Full Grok-SL Transformer implementation
 
 ### Phase 4: Training Infrastructure (Weeks 5-6)
-- Pinball loss with monotonicity constraints
-- AdamW optimizer with cosine scheduling
-- Mixed precision training (BF16)
-- Gradient checkpointing for memory efficiency
-- WandB logging integration
+- [ ] Pinball loss with monotonicity constraints
+- [ ] AdamW optimizer with cosine scheduling + warmup
+- [ ] Mixed precision training (BF16/TF32)
+- [ ] Gradient checkpointing for memory efficiency
+- [ ] WandB logging integration
+- [ ] Checkpoint save/restore
 
 ### Phase 5: Evaluation Framework (Weeks 7-8)
-- CRPS (Continuous Ranked Probability Score)
-- Information Coefficient (IC)
-- Tail-weighted accuracy
-- Sharpe/Sortino ratios (backtest proxy)
-- Quantile calibration analysis
+- [ ] CRPS (Continuous Ranked Probability Score)
+- [ ] Information Coefficient (IC)
+- [ ] Tail-weighted accuracy
+- [ ] Sharpe/Sortino ratios (backtest proxy)
+- [ ] Quantile calibration analysis
+- [ ] Ablation studies for hypothesis validation
 
 ### Phase 6: Optimization and Deployment (Weeks 9-10)
-- Hyperparameter tuning (Optuna)
-- Ensemble methods
-- Real-time inference pipeline
-- Model compression (if needed)
+- [ ] Hyperparameter tuning (Optuna)
+- [ ] torch.compile optimization
+- [ ] Ensemble methods
+- [ ] Real-time inference pipeline
+- [ ] Model export (ONNX if needed)
 
 ## Performance Targets
 
@@ -271,27 +347,29 @@ Based on hypotheses in grok-scientific.md:
 | CRPS Reduction | -25% | vs. point estimate baseline |
 | Cross-Regime Accuracy | +15-20% | via Instance Normalization |
 | Tail Accuracy (top/bottom 10%) | > 55% | vs. ~50% random |
+| Validation IC (5m horizon) | > 0.02 | Phase 2 validation criterion |
 
 ## Technical Stack
 
-- **Framework**: PyTorch 2.0+ (native FlashAttention-2)
+- **Framework**: PyTorch 2.0+ (native FlashAttention-2 planned for Phase 3)
 - **Data Format**: Parquet with Snappy compression
-- **Precision**: BF16 training, FP32 accumulation
+- **Precision**: FP32 (Phase 2), BF16 training planned (Phase 4)
 - **Hardware**: Google Colab A100 (80GB VRAM, 167GB RAM, 12 CPU cores)
-- **Data Provider**: Databento Historical API
+- **Data Provider**: Databento Historical API (GLBX.MDP3 dataset)
 - **Version Control**: Git + GitHub
+- **Experiment Tracking**: WandB (Phase 4)
 
 ## Scientific Foundation
 
 FuturesSL adapts insights from recent literature on transformer-based financial forecasting:
 
-1. **Memory Instance Gated Transformer (MIGT)** - Instance normalization for cross-regime generalization
-2. **RL-TVDT** - Variable dependency attention for multi-variate time series
+1. **Memory Instance Gated Transformer (MIGT)** - Instance normalization for cross-regime generalization, Lite Gate Units for noise filtering
+2. **RL-TVDT** - Two-Stage Attention (Temporal + Variable), variable dependency modeling
 3. **PatchTST** - Evaluated but not adopted (granularity mismatch for short horizons)
 4. **Temporal Fusion Transformer (TFT)** - Multi-horizon forecasting architecture inspiration
 5. **Quantile Regression Networks** - Distributional learning for heteroskedastic returns
 
-See [gemini-research.md](gemini-research.md) for complete references and theoretical justification.
+See [gemini-research.md](docs/gemini-research.md) for complete references and theoretical justification.
 
 ## Evaluation Philosophy
 
@@ -345,6 +423,6 @@ If you use FuturesSL in your research, please cite:
 
 ---
 
-**Project Status**: Dev Phase 1 Complete | Active Development  
+**Project Status**: Dev Phase 2 Complete | Active Development  
 **Last Updated**: December 2025  
-**Contact**: [Your contact information]
+**Next Milestone**: Phase 3 - TSA + LGU Architecture
