@@ -1472,8 +1472,10 @@ class MultiHorizonHead(nn.Module):
                     prev_value = targets[:, i-1:i]  # (B, 1)
                     prev_cond = self.target_embeddings[i](prev_value)  # (B, 7)
                 else:
-                    # Use predicted quantile distribution
-                    prev_cond = prev_output  # (B, 7)
+                    # Use predicted MEDIAN per grok-scientific.md §4.2:
+                    # "feed predicted medians from shorter horizons into longer ones"
+                    prev_value = prev_output[:, 3:4]  # (B, 1) - median (τ=0.5)
+                    prev_cond = self.target_embeddings[i](prev_value)  # (B, 7)
                     
                 # Concatenate quantile representation and hidden state
                 combined = torch.cat([prev_cond, prev_hidden], dim=-1)  # (B, 7 + d_model)
