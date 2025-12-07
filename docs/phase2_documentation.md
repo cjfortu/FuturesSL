@@ -1,6 +1,6 @@
 # Phase 2 Documentation: Dataset and Baseline Model
 
-**Version:** 1.0  
+**Version:** 1.2  
 **Date:** 2025-12-07  
 **Author:** Claude (Engineering Lead)  
 **Status:** Complete
@@ -233,15 +233,69 @@ The Dataset API remains unchanged.
 
 ---
 
-## 6. Critical Fix: Timezone Handling
+## 6. Critical Engineering Decisions
 
-### Issue
+### 6.1 Window Sampling Strategy
+
+**Decision:** Implemented stride=60 (hourly overlap) for training dataset instead of non-overlapping windows specified in grok-scientific.md §4.1.
+
+**Scientific Specification:**
+- grok-scientific.md §4.1: "Non-overlapping sampling for training, full for eval"
+- Implies stride ≈ 6900 (weekly windows), yielding ~450 training samples
+
+**Phase 2 Implementation:**
+- Training: stride=60 → ~52,000 samples with heavy temporal overlap (~115x per trading week)
+- Validation/Test: stride=1 (full resolution) as specified
+
+**Rationale:**
+1. **Sample Efficiency for Baseline Validation**
+   - Non-overlapping windows (~450 samples) would require many epochs for meaningful statistical power
+   - A100 training would exhaust epochs quickly, limiting hyperparameter exploration
+   - Overlapping windows provide robust gradient estimates for baseline convergence
+
+2. **Practical Prototyping**
+   - Phase 2 is explicitly a "vanilla Transformer baseline to establish performance floor" (claude-engineering.md §4.2)
+   - Goal: Validate data pipeline, model architecture, and training infrastructure
+   - Sample efficiency enables faster iteration on architecture choices
+
+3. **Progressive Refinement Strategy**
+   - Start with overlapping (Phase 2) to establish baseline IC > 0.02
+   - Ablate to non-overlapping (Phase 3) to test hypothesis H2 (multi-scale dependency)
+   - Compare IC delta to quantify leakage vs. sample efficiency trade-off
+
+**Risks:**
+- **Temporal Leakage:** Overlapping windows may inflate validation IC due to near-duplicate samples
+- **Overfitting Risk:** Low SNR regimes (per grok-scientific.md §2.2) may suffer from redundancy-induced variance collapse
+- **Hypothesis Violation:** Undermines H2 testing (multi-scale dependency capture via regime-isolated windows)
+
+**Mitigations:**
+- Val/test maintain full resolution (stride=1) - no overlap
+- Early stopping on validation loss prevents training set overfitting
+- Phase 3 will include non-overlapping ablation as hypothesis test gate:
+```
+  If non_overlap_IC - overlap_IC < -0.01:
+      Flag as potential leakage; revert to stride=6900
+```
+
+**Phase 3 Transition Plan:**
+1. Run baseline training with stride=60, establish IC_baseline
+2. Retrain with stride=6900 (non-overlapping), measure IC_nonoverlap
+3. If IC_nonoverlap > IC_baseline - 0.01: Adopt non-overlapping as default
+4. Otherwise: Document trade-off, consider intermediate stride (e.g., 1440 = daily)
+
+**Status:** Accepted for Phase 2; flagged for Phase 3 ablation study.
+
+**Authority:** Engineering decision (Claude) with scientific review pending (Grok to ideate grok-scientific.md v2.0 configurable sampling addendum).
+
+### 6.2 Fix: Timezone Handling
+
+#### Issue
 Databento returns UTC-aware timestamps (`datetime64[ns, UTC]`), preserved through Phase 1 Parquet storage. Phase 2's `_apply_date_split` used timezone-naive `pd.Timestamp()` for date comparisons, causing `TypeError: Invalid comparison between dtype=datetime64[ns, UTC] and Timestamp`.
 
-### Root Cause
+#### Root Cause
 Phase 1 feature engineering (particularly VWAP session resets) assumes timestamps represent local market time (Chicago/Central Time) via `.dt.hour == 9` checks. Keeping UTC-aware timestamps would make these computations incorrect (09:30 UTC ≠ 09:30 CT).
 
-### Solution
+#### Solution
 Convert to timezone-naive in `_apply_date_split`:
 ```python
 if df['timestamp'].dt.tz is not None:
@@ -264,6 +318,7 @@ if df['timestamp'].dt.tz is not None:
 |------|---------|---------|
 | 2025-12-07 | 1.0 | Initial Phase 2 implementation |
 | 2025-12-07 | 1.1 | Fixed timezone comparison in `_apply_date_split` (naive timestamps) |
+| 2025-12-07 | 1.2 | Documented window sampling strategy |
 
 ---
 
