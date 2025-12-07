@@ -2709,10 +2709,15 @@ def enable_gradient_checkpointing(model):
 
 | Configuration | Estimated VRAM | Notes |
 |--------------|----------------|-------|
-| batch_size=8, no checkpoint | ~45-55GB | Default config |
-| batch_size=8, with checkpoint | ~30-35GB | Use if OOM |
-| batch_size=16, no checkpoint | ~70-80GB | Maximum batch |
-| batch_size=4, no checkpoint | ~25-30GB | Conservative |
+| batch_size=8, FP32, no checkpoint | ~45-55GB | FP32 baseline (Phase 2 initial) |
+| batch_size=8, BF16, no checkpoint | ~25-35GB | **With AMP (recommended)** |
+| batch_size=8, BF16, with checkpoint | ~20-25GB | Maximum efficiency |
+| batch_size=16, BF16, no checkpoint | ~45-60GB | Larger batch with AMP |
+| batch_size=4, BF16, no checkpoint | ~15-20GB | Conservative config |
+
+**Phase 2 actual measurements (BF16):**
+- Inference: ~25-30 GB
+- Training: ~30-40 GB
 
 ---
 
