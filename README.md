@@ -122,11 +122,15 @@ The core architecture processes input through the following stages:
 
 ### Phase 2: Dataset and Baseline Model ✓
 
-**Dataset Module** (`src/data/dataset.py`):
+**Dataset Module** (`src/data/dataset.py`)
 - `NQFuturesDataset`: Rolling window dataset with proper padding/masking
 - Window strategy: ~6900 bars context, right-padded to T_max=7000
-- Train stride: 60 bars (hourly non-overlapping samples)
-- Val/Test stride: 1 bar (full sequential coverage)
+- **Train stride: 60 bars (hourly stride with temporal overlap)**
+  - Generates ~52k samples vs ~450 with non-overlapping windows
+  - Trade-off: Sample efficiency for baseline training vs potential leakage
+  - See [phase2_documentation.md](docs/phase2_documentation.md) §6.1 for detailed rationale
+  - Phase 3 will include non-overlapping ablation study
+- Val/Test stride: 1 bar (full sequential coverage, no overlap)
 - Temporal features: 8-channel encoding for cyclical positional embeddings
 - Automatic normalization statistics handling
 - Efficient batch generation with DataLoader utilities
@@ -144,11 +148,15 @@ The core architecture processes input through the following stages:
 - `tests/phase2_tests.ipynb`: Dataset, model, and integration tests
 - Comprehensive unit tests for all components
 - Performance benchmarking and shape validation
+- **IC smoke test**: Baseline Information Coefficient validation (untrained model)
 
-**Critical Issues Resolved:**
-- Timezone handling: Converted timestamps to naive (market-local time) for consistency
-- Feature normalization: Proper handling of NaN values and padding
-- Sequence boundary handling: Eliminated future data leakage
+**Critical Engineering Decisions:**
+- **Sampling Strategy**: Adopted stride=60 (overlapping) for baseline sample efficiency
+  - Documented in [phase2_documentation.md](docs/phase2_documentation.md) §6.1
+  - Mitigation: Val/test remain full-resolution; Phase 3 ablation planned
+- **Timezone Handling**: Converted timestamps to naive (market-local time) for consistency
+- **Feature Normalization**: Proper handling of NaN values and padding
+- **Sequence Boundaries**: Eliminated future data leakage
 
 ## Installation
 
