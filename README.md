@@ -1,7 +1,7 @@
 # FuturesSL: Distributional Forecasting for NASDAQ Futures
 
 **Author:** Clemente Fortuna  
-**Project Status:** Phase 3 Complete (Dataset & DataLoader Implementation)
+**Project Status:** Phase 4 Complete (Model Architecture Implementation)
 
 ## Overview
 
@@ -12,6 +12,7 @@ This project implements a novel hybrid architecture combining:
 - **Two-Stage Attention** decoupling temporal and cross-variable dynamics
 - **Gated Instance Normalization** from MIGT [2] for non-stationary financial data
 - **Quantile Regression** for distributional outputs with calibrated prediction intervals
+- **Flash Attention** for memory-efficient training on A100 GPUs
 
 ## Project Motivation
 
@@ -53,30 +54,44 @@ Key preprocessing steps:
 
 All features computed causally to prevent lookahead bias.
 
-### Model Architecture (Phase 4 - In Development)
+### Model Architecture (Phase 4 - Complete)
 
 ```
 Input: (Batch, Time=273-276, Variables=24)
   ↓ Padding + Masking → (Batch, 288, 24)
   ↓ Variable Embedding → (Batch, 24, D_model)
-  ↓ Positional Encoding (Time of Day, Day of Week, Time2Vec)
+  ↓ Positional Encoding (Composite 96D → 256D)
+     - Time-of-day: Sinusoidal (32D)
+     - Day-of-week: Learnable (16D)
+     - Day-of-month: Time2Vec (16D)
+     - Day-of-year: Time2Vec (32D)
   
-[Temporal Attention Stage]
+[Temporal Attention Stage] (4 layers)
   For each variable independently:
-    ↓ Self-Attention over time dimension
+    ↓ Self-Attention over time dimension (Flash Attention)
+    ↓ Feed-forward network + residual
     ↓ Attention-weighted pooling → (Batch, 24, D_model)
   
-[Variable Attention Stage]
-  ↓ Cross-attention between variables
-  ↓ Gated Instance Normalization (MIGT)
-  ↓ Residual connections
+[Variable Attention Stage] (2 layers)
+  ↓ Cross-attention between variables (Flash Attention)
+  ↓ Gated Instance Normalization (RevIN + LGU)
+  ↓ Feed-forward network + residual
   
 [Multi-Horizon Quantile Heads]
   For each horizon h ∈ {15m, 30m, 60m, 2h, 4h}:
     ↓ Horizon embedding
     ↓ MLP decoder
     ↓ Output: 7 quantiles (τ = 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
+    ↓ Cumulative softplus (guaranteed non-crossing)
 ```
+
+**Architecture Parameters:**
+- d_model: 256
+- n_heads: 8 (32D per head)
+- d_ff: 1024
+- dropout: 0.1
+- Temporal layers: 4
+- Variable layers: 2
 
 **Key Design Choices:**
 
@@ -86,15 +101,20 @@ Input: (Batch, Time=273-276, Variables=24)
 
 3. **Instance Normalization with Gating:** Normalizes each 24-hour window independently, allowing the model to learn shape patterns invariant to price level. The Lite Gate Unit (LGU) filters noisy signals common in high-frequency data.
 
-4. **Distributional Outputs:** Quantile regression with pinball loss directly optimizes prediction intervals. Softplus parameterization ensures monotonic quantile ordering (no crossing).
+4. **Distributional Outputs:** Quantile regression with pinball loss directly optimizes prediction intervals. Cumulative softplus parameterization ensures monotonic quantile ordering (no crossing).
+
+5. **Flash Attention:** PyTorch 2.0+ SDPA backend reduces memory complexity from O(T²) to O(T) per layer, enabling batch sizes up to 128 on A100 (vs. 64 with manual attention).
 
 ### Positional Encodings
 
 Multi-scale temporal encoding capturing financial market cycles:
 
-- **Time of Day:** Cyclical sine/cosine (288 5-min periods)
-- **Day of Week:** Learnable embeddings (Mon-Fri market effects)
-- **Seasonal Patterns:** Time2Vec [3] with learned frequencies for quarterly rebalancing, option expiry effects
+- **Time of Day (32D):** Sinusoidal encoding with integer frequency multipliers (k=1,2,...,16) for exact periodicity over 288 5-minute bars. Captures market open, lunch, close patterns.
+- **Day of Week (16D):** Learnable embeddings for Mon-Fri market effects (e.g., Monday reversals, Friday position squaring).
+- **Day of Month (16D):** Time2Vec with learned frequencies for monthly patterns (option expiry, rebalancing).
+- **Day of Year (32D):** Time2Vec for seasonal patterns (quarterly earnings, tax deadlines, holiday effects).
+
+Total: 96D projected to d_model=256 via learned linear layer.
 
 ## Implementation Status
 
@@ -158,7 +178,7 @@ Multi-scale temporal encoding capturing financial market cycles:
 **Split Statistics:**
 
 | Split | Date Range | Samples | % |
-|-------|-----------|---------|---|
+|-------|-----------|---------|------|
 | Train | 2010-06-07 to 2021-12-31 | ~580K | 70% |
 | Val | 2022-01-02 to 2023-12-31 | ~164K | 20% |
 | Test | 2024-01-02 to 2025-12-03 | ~85K | 10% |
@@ -169,16 +189,41 @@ Multi-scale temporal encoding capturing financial market cycles:
 - Total purged: ~576 bars (~0.05% of data)
 - Rationale: Prevents validation/test lookback windows from overlapping with train data
 
-**Technical Improvements (Phase 3):**
-- End-of-day timestamps for intuitive date handling
-- Purge gaps between splits (standard ML practice)
-- Low-variance feature handling in normalization
-- Comprehensive leakage validation
+### ✅ Phase 4: Model Architecture Implementation (Complete)
 
-### 🔄 Phase 4-6: In Development
+**Deliverables:**
+- `positional_encodings.py` - Composite positional encoding with Time2Vec
+- `embeddings.py` - Variable embedding with 3D to 4D projection
+- `temporal_attention.py` - Temporal attention with Flash Attention
+- `variable_attention.py` - Cross-variable attention with Flash Attention
+- `gated_instance_norm.py` - RevIN with LGU gating
+- `quantile_heads.py` - Non-crossing quantile regression heads
+- `migt_tvdt.py` - Complete MIGT-TVDT hybrid architecture
+- `model_config.yaml` - Architecture configuration
+- `04_model_testing.ipynb` - Comprehensive testing notebook
 
-- **Phase 4:** Transformer model implementation (MIGT-TVDT hybrid)
-- **Phase 5:** Training pipeline (quantile loss, validation monitoring)
+**Key Achievements:**
+- Flash Attention implementation reduces memory from 77GB (manual) to 35GB at batch_size=64
+- Batch size 128 achieves ~70GB VRAM usage (88% A100 utilization, safe margin for Phase 5)
+- All 10 test suites passing (architecture, positional encoding, attention mechanisms, quantile heads, save/load, integration)
+- Phase 3 integration verified (dataset outputs compatible with model inputs)
+- Model parameters: ~10-40M (varies with configuration)
+
+**Memory Profile (Flash Attention, A100 80GB):**
+- Batch size 64: 35.44 GB (44% utilization)
+- Batch size 128: ~70 GB (88% utilization)
+- Batch size 180: OOM (exceeds capacity)
+
+**Technical Highlights:**
+- Composite positional encoding with integer frequency multipliers for exact periodicity
+- Two-stage attention architecture (temporal then variable)
+- Gated Instance Normalization (RevIN + LGU) for non-stationary data
+- Non-crossing quantile outputs via cumulative softplus parameterization
+- Full PyTorch 2.0+ SDPA compatibility
+
+### 🔄 Phase 5-6: In Development
+
+- **Phase 5:** Training pipeline (quantile loss, validation monitoring, optimizer configuration)
 - **Phase 6:** Evaluation & backtesting (IC, CRPS, Sharpe ratio, calibration analysis)
 
 ## Compute Environment
@@ -188,9 +233,16 @@ Multi-scale temporal encoding capturing financial market cycles:
 **Storage:** Google Drive integration for data persistence
 
 Memory profile estimates:
-- Model parameters: ~10-40M (20-40 GB peak VRAM with batch size 64-256)
-- Training data: In-memory loading after initial GDrive copy
-- Checkpointing: Periodic saves to GDrive
+- Model parameters: ~10-40M
+- Forward pass (B=128): ~70 GB
+- Training overhead (Adam + gradients): +3 GB
+- Total training memory: ~73 GB (91% utilization, safe margin)
+- Gradient checkpointing: Not required (sufficient headroom, would add ~20% training time)
+
+**Optimal Batch Sizes (research-backed):**
+- Primary: 128 (optimal for financial time series, fits comfortably)
+- Alternative: 64 (more gradient noise, useful for exploration)
+- Avoid: >180 (overfitting risk, exceeds memory, no performance gain)
 
 ## Installation & Setup
 
@@ -211,7 +263,7 @@ pip install -r requirements.txt
 
 Key packages:
 - **Data:** `databento`, `pyarrow`, `fastparquet`
-- **Model:** `torch`, `einops`, `flash-attn` (optional)
+- **Model:** `torch`, `einops`
 - **Training:** `wandb`, `tensorboard`, `optuna`
 - **Evaluation:** `scipy`, `scikit-learn`, `matplotlib`, `seaborn`
 
@@ -225,7 +277,7 @@ drive.mount('/content/drive')
 
 2. Install dependencies:
 ```python
-!pip install -q databento einops wandb flash-attn
+!pip install -q databento einops wandb
 ```
 
 3. Verify GPU:
@@ -233,6 +285,8 @@ drive.mount('/content/drive')
 import torch
 print(f"GPU: {torch.cuda.get_device_name(0)}")
 print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+print(f"PyTorch: {torch.__version__}")
+print(f"CUDA: {torch.version.cuda}")
 ```
 
 ### Data Directory Structure
@@ -253,21 +307,32 @@ print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 │       ├── test_samples.parquet
 │       └── column_info.csv
 ├── src/
-│   └── data/
-│       ├── data_loader.py
-│       ├── rollover_adjustment.py
-│       ├── feature_engineering.py
-│       ├── preprocessing.py
-│       └── dataset.py
+│   ├── data/
+│   │   ├── data_loader.py
+│   │   ├── rollover_adjustment.py
+│   │   ├── feature_engineering.py
+│   │   ├── preprocessing.py
+│   │   └── dataset.py
+│   └── model/
+│       ├── positional_encodings.py
+│       ├── embeddings.py
+│       ├── temporal_attention.py
+│       ├── variable_attention.py
+│       ├── gated_instance_norm.py
+│       ├── quantile_heads.py
+│       └── migt_tvdt.py
+├── configs/
+│   └── model_config.yaml
 └── notebooks/
     ├── 01_data_acquisition.ipynb
     ├── 02_preprocessing.ipynb
-    └── 03_dataset_preparation.ipynb
+    ├── 03_dataset_preparation.ipynb
+    └── 04_model_testing.ipynb
 ```
 
 ## Usage
 
-### Phase 1-3: Data Preparation (Current Status)
+### Phase 1-3: Data Preparation
 
 ```python
 from src.data import DataLoader, RolloverAdjuster, FeatureEngineer
@@ -306,28 +371,57 @@ val_loader = data_module.val_dataloader()
 test_loader = data_module.test_dataloader()
 ```
 
-### Phase 4+: Model Training (Planned)
+### Phase 4: Model Instantiation
 
 ```python
-from src.model import MIGTTVDTModel
-from src.training import QuantileLoss, Trainer
+from src.model import MIGT_TVDT
+import yaml
+
+# Load configuration
+with open('configs/model_config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
 
 # Initialize model
-model = MIGTTVDTModel(
-    input_vars=24,
-    d_model=256,
-    n_heads=8,
-    n_layers=6,
-    horizons=5,
-    quantiles=[0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
-)
+model = MIGT_TVDT(config['model'])
+
+# Model summary
+print(f"Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+print(f"Trainable: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.2f}M")
+
+# Forward pass example
+batch = next(iter(train_loader))
+features = batch['features']  # (B, T, V)
+mask = batch['mask']          # (B, T)
+temporal_info = batch['temporal_info']  # dict with positional encoding inputs
+
+predictions = model(features, mask, temporal_info)
+# predictions: (B, n_horizons, n_quantiles) = (B, 5, 7)
+```
+
+### Phase 5: Model Training (Planned)
+
+```python
+from src.training import QuantileLoss, Trainer
 
 # Setup training
-criterion = QuantileLoss(quantiles=model.quantiles)
-trainer = Trainer(model, criterion, optimizer='AdamW', lr=1e-4)
+criterion = QuantileLoss(quantiles=config['quantile_regression']['quantiles'])
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+
+trainer = Trainer(
+    model=model,
+    criterion=criterion,
+    optimizer=optimizer,
+    device='cuda'
+)
 
 # Train with validation monitoring
-trainer.fit(train_loader, val_loader, epochs=100, early_stopping_patience=10)
+trainer.fit(
+    train_loader=train_loader,
+    val_loader=val_loader,
+    epochs=100,
+    early_stopping_patience=10,
+    checkpoint_dir='/path/to/checkpoints'
+)
 ```
 
 ## Performance Metrics
@@ -359,12 +453,13 @@ trainer.fit(train_loader, val_loader, epochs=100, early_stopping_patience=10)
 ### Ablation Studies (Planned)
 
 | Configuration              | Modification                | Expected Impact          |
-|----------------------------|----------------------------|--------------------------|
-| No Variable Embedding      | Standard timestep tokens   | ↓ IC (entangled)         |
-| No Two-Stage Attention     | Single attention stage     | ↑ compute, ↓ performance |
-| No Instance Normalization  | LayerNorm only             | ↓ regime adaptation      |
-| No Gating (LGU)            | Remove gate mechanism      | ↑ noise, wider intervals |
-| Point Prediction (MSE)     | MSE loss instead of QR     | No uncertainty, ↑ CRPS   |
+|----------------------------|----------------------------|-----------------------------|
+| No Variable Embedding      | Standard timestep tokens   | ↓ IC (entangled)            |
+| No Two-Stage Attention     | Single attention stage     | ↑ compute, ↓ performance    |
+| No Instance Normalization  | LayerNorm only             | ↓ regime adaptation         |
+| No Gating (LGU)            | Remove gate mechanism      | ↑ noise, wider intervals    |
+| Point Prediction (MSE)     | MSE loss instead of QR     | No uncertainty, ↑ CRPS      |
+| Manual Attention           | Disable Flash Attention    | ↑ memory (77GB), ↓ batch    |
 
 ## Data Considerations
 
@@ -412,12 +507,12 @@ This is standard ML practice for time series and prevents subtle leakage through
 | 1 | ✅ Complete | Week 1-2 | Data Acquisition & Preprocessing |
 | 2 | ✅ Complete | Week 3 | Feature Engineering |
 | 3 | ✅ Complete | Week 4 | Dataset & DataLoader |
-| 4 | 🔄 In Progress | Week 5-6 | Model Implementation |
+| 4 | ✅ Complete | Week 5-6 | Model Implementation |
 | 5 | ⏸️ Planned | Week 7 | Training Pipeline |
 | 6 | ⏸️ Planned | Week 8 | Evaluation & Analysis |
 | 7 | ⏸️ Planned | Week 9-10 | Hyperparameter Optimization |
 
-**Total Duration:** ~10 weeks (Phases 1-3 complete)
+**Total Duration:** ~10-12 weeks (Phases 1-4 complete, 6 weeks elapsed)
 
 ## References
 
@@ -433,6 +528,14 @@ This is standard ML practice for time series and prevents subtle leakage through
 
 [6] Y. Zhang and J. Yan, "Crossformer: Transformer Utilizing Cross-Dimension Dependency for Multivariate Time Series Forecasting," *ICLR*, 2023. https://openreview.net/forum?id=vSVLM2j9eie
 
+[7] T. Dao et al., "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness," *NeurIPS*, 2022. https://arxiv.org/abs/2205.14135
+
+[8] J. Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding," *arXiv preprint arXiv:2104.09864*, 2021. https://arxiv.org/abs/2104.09864
+
+[9] S. Hochreiter and J. Schmidhuber, "Long Short-Term Memory," *Neural Computation*, 1997.
+
+[10] B. Lim et al., "Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting," *International Journal of Forecasting*, 2021.
+
 ## Documentation
 
 Comprehensive documentation is available in the `/docs` folder:
@@ -443,6 +546,7 @@ Comprehensive documentation is available in the `/docs` folder:
 - **`dev_phase_1_documentation.md`** - Phase 1 implementation details and testing results
 - **`dev_phase_2_documentation.md`** - Phase 2 implementation details and feature validation
 - **`dev_phase_3_documentation.md`** - Phase 3 implementation details including purge gap fixes and normalization improvements
+- **`dev_phase_4_documentation.md`** - Phase 4 implementation details including Flash Attention optimization and testing results
 
 ## License
 
@@ -451,9 +555,10 @@ This project is provided as-is for research and educational purposes.
 ## Contact
 
 **Author:** Clemente Fortuna  
-**Project:** FuturesSL - Distributional Forecasting for NASDAQ Futures
+**Project:** FuturesSL - Distributional Forecasting for NASDAQ Futures  
+**Repository:** https://github.com/cjfortu/FuturesSL
 
 ---
 
 *Last Updated: December 2025*  
-*Project Status: Phase 3 Complete - Dataset & DataLoader Delivered*
+*Project Status: Phase 4 Complete - Model Architecture Implemented*
