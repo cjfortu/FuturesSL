@@ -171,7 +171,7 @@ class Trainer:
         self.loss_fn = CombinedQuantileLoss(
             quantiles=quant_cfg['quantiles'],
             crossing_weight=quant_cfg.get('crossing_weight', 0.0)
-        )
+        ).to(self.device)
         
         # Initialize optimizer
         self.optimizer = torch.optim.AdamW(
