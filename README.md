@@ -1,436 +1,368 @@
-# FuturesSL: Transformer-Based Distributional Forecasting for NQ Futures
+# FuturesSL: Distributional Forecasting for NASDAQ Futures
 
-A sophisticated machine learning system for predicting NASDAQ 100 E-mini futures (NQ) forward returns across multiple time horizons using transformer architectures and distributional learning methods.
+**Author:** Clemente Fortuna  
+**Project Status:** Phase 2 Complete (Data Acquisition & Feature Engineering)
 
 ## Overview
 
-FuturesSL is a supervised learning model designed to predict NQ forward log-returns over six horizons (5m, 15m, 30m, 60m, 2h, 4h) using approximately one trading week of minute-level market data (~6,825-6,900 bars). The project prioritizes prediction accuracy through a novel architecture that combines:
+FuturesSL is a transformer-based distributional forecasting system for NASDAQ 100 (NQ) futures trading. The model predicts log-return distributions across multiple time horizons (15m, 30m, 60m, 2h, 4h) using quantile regression, providing both point forecasts and calibrated uncertainty estimates for enhanced risk management.
 
-- **Two-Stage Attention (TSA)**: Separates temporal and variable-level attention mechanisms to capture both time-series patterns and cross-feature dependencies
-- **Instance Normalization**: Enables cross-regime generalization by learning price trajectory shapes rather than absolute levels
-- **Distributional Outputs**: Produces quantile predictions rather than point estimates to capture market uncertainty and heteroskedasticity
-- **Lite Gate Units (LGU)**: Filters noise in low signal-to-noise ratio environments while maintaining gradient stability
+This project implements a novel hybrid architecture combining:
+- **Variable Embeddings** from RL-TVDT [1] for improved multivariate dependency modeling
+- **Two-Stage Attention** decoupling temporal and cross-variable dynamics
+- **Gated Instance Normalization** from MIGT [2] for non-stationary financial data
+- **Quantile Regression** for distributional outputs with calibrated prediction intervals
 
-### Key Features
+## Project Motivation
 
-- Full-sequence processing without patching to preserve temporal fidelity at 1-minute resolution
-- Cyclical positional embeddings encoding time-of-day, day-of-week, day-of-month, and day-of-year patterns
-- 24 engineered technical features grouped into 6 semantic categories (price, volume, trend, momentum, volatility, flow)
-- Autoregressive multi-horizon prediction heads with teacher forcing during training
-- Optimized for Google Colab A100 GPU (80GB VRAM) environment
+Traditional point-forecast models fail to capture the uncertainty inherent in financial markets. FuturesSL addresses this through distributional forecasting, outputting a full predicted distribution (via 7 quantiles: 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95) rather than single point estimates. This enables:
 
-## Project Architecture
+1. **Risk-Aware Predictions:** Quantile spread indicates forecast uncertainty
+2. **Tail Risk Assessment:** Explicit modeling of extreme outcomes
+3. **Trading Strategy Integration:** Position sizing based on confidence intervals
+4. **Regime Adaptation:** Instance normalization handles non-stationary market regimes
 
-### Collaborative Development Approach
+## Technical Architecture
 
-FuturesSL is developed through collaboration between three AI systems, each with specialized expertise:
+### Data Pipeline
 
-- **Claude (Opus 4.1)**: Engineering & Planning Lead - Architecture design, implementation specifications, phased development
-- **Gemini (2.5 Pro)**: Research Lead - Literature review, mathematical foundations, methodology selection
-- **Grok (Super 4/4.1)**: Chief Quant/ML Scientist - Scientific ideation, hypothesis generation, model concepts
+**Source:** Databento NQ front-month continuous contract (volume-based rollover)  
+**Period:** June 2010 - December 2025 (15.5 years)  
+**Frequency:** 5-minute OHLCV bars (~1.1M samples)
 
-This multi-AI approach ensures rigorous peer review at each stage, from research through scientific formulation to engineering implementation.
+Key preprocessing steps:
+- Ratio back-adjustment for futures rollover (preserves log-returns)
+- Invalid tick filtering (outliers, zero prices/volume)
+- Trading halt detection and flagging
+- Comprehensive feature engineering (24 features across 6 categories)
 
-### Documentation Structure
+### Feature Engineering
 
-The project maintains three authoritative documents:
+**Raw Features (5):**
+- Price: open, high, low, close
+- Volume: volume
 
-1. **[gemini-research.md](docs/gemini-research.md)**: Research guide covering transformer architectures, positional encoding for financial time series, distributional forecasting methods, and references to source literature
-2. **[grok-scientific.md](docs/grok-scientific.md)**: Scientific blueprint translating research into mathematical formulations, algorithmic strategies, and testable hypotheses
-3. **[claude-engineering.md](docs/claude-engineering.md)**: Engineering implementation guide with PyTorch specifications, module designs, and phased development plan
+**Derived Features (19):**
+- **Volatility (4):** Garman-Klass estimator, Realized Volatility (1h, 3h, 6h windows)
+- **Liquidity (1):** Amihud illiquidity proxy
+- **Momentum (5):** RSI-14, MACD, Rate of Change (5, 10, 20 periods)
+- **Trend (6):** EMA slopes (9, 21, 50), EMA deviations (9, 21, 50)
+- **Range (1):** Average True Range (14-period)
+- **Volume (2):** Log volume, volume MA ratio
 
-### System Components
+All features computed causally to prevent lookahead bias.
+
+### Model Architecture (Planned - Phase 4)
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        DATA PIPELINE                                │
-├─────────────────────────────────────────────────────────────────────┤
-│  Databento API → Raw OHLCV → Feature Engineering → Parquet Storage │
-│                                ↓                                    │
-│                       Google Drive Sync                             │
-└─────────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                      TRAINING PIPELINE                              │
-├─────────────────────────────────────────────────────────────────────┤
-│  Colab VM ← Copy from Drive                                        │
-│       ↓                                                             │
-│  NQDataset → DataLoader → Model → Loss → Optimizer → Checkpoints   │
-└─────────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                         MODEL                                       │
-├─────────────────────────────────────────────────────────────────────┤
-│  Input → InstanceNorm → Linear → PositionalEmbed                   │
-│                              ↓                                      │
-│                    Transformer Encoder Blocks                       │
-│                              ↓                                      │
-│              Multi-Horizon Quantile Prediction Heads                │
-└─────────────────────────────────────────────────────────────────────┘
+Input: (Batch, Time=273-276, Variables=24)
+  â†" Padding + Masking → (Batch, 288, 24)
+  â†" Variable Embedding → (Batch, 24, D_model)
+  â†" Positional Encoding (Time of Day, Day of Week, Time2Vec)
+  
+[Temporal Attention Stage]
+  For each variable independently:
+    â†" Self-Attention over time dimension
+    â†" Attention-weighted pooling → (Batch, 24, D_model)
+  
+[Variable Attention Stage]
+  â†" Cross-attention between variables
+  â†" Gated Instance Normalization (MIGT)
+  â†" Residual connections
+  
+[Multi-Horizon Quantile Heads]
+  For each horizon h ∈ {15m, 30m, 60m, 2h, 4h}:
+    â†" Horizon embedding
+    â†" MLP decoder
+    â†" Output: 7 quantiles (τ = 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 ```
 
-### Model Architecture: Grok-SL Transformer
+**Key Design Choices:**
 
-The core architecture processes input through the following stages:
+1. **Variable-Centric Embeddings:** Unlike standard transformers that embed timesteps, we embed the entire time series of each variable. This allows the model to learn correlations between indicators (e.g., RSI-Volume relationships) rather than just temporal patterns.
 
-1. **Instance Normalization**: Per-sample, per-feature normalization across time to enforce stationarity
-2. **Feature Embedding**: Linear projection of 24 raw features to d_model=512 dimensions
-3. **Positional Encoding**: Cyclical temporal embeddings + learnable day-of-week embeddings
-4. **Transformer Encoder**: 6-layer encoder with multi-head attention
-   - *Phase 3 will replace with TSA (Temporal + Variable attention) + LGU blocks*
-5. **Quantile Heads**: Multi-horizon quantile regression heads
-   - *Phase 3 will add autoregressive conditioning between horizons*
+2. **Two-Stage Attention:** Decouples temporal dynamics (intraday patterns within each feature) from cross-variable dependencies (how features interact). Reduces computational complexity and aligns with financial market structure.
 
-**Key Specifications:**
-- Sequence Length: T_max = 7,000 (padded)
-- Model Dimension: d = 512
-- Attention Heads: 8
-- Encoder Layers: 6 (Phase 2 baseline)
-- Quantiles: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
-- Horizons: [5, 15, 30, 60, 120, 240] minutes
+3. **Instance Normalization with Gating:** Normalizes each 24-hour window independently, allowing the model to learn shape patterns invariant to price level. The Lite Gate Unit (LGU) filters noisy signals common in high-frequency data.
 
-## Current Status: Dev Phase 2 Complete ✓
+4. **Distributional Outputs:** Quantile regression with pinball loss directly optimizes prediction intervals. Softplus parameterization ensures monotonic quantile ordering (no crossing).
 
-### Phase 1: Data Acquisition and Feature Engineering ✓
+### Positional Encodings
 
-**Data Acquisition Module** (`src/data/acquisition.py`):
-- Databento Historical API integration with NQ.v.0 (volume-based rollover)
-- Chunked downloading (90-day segments) with retry logic
-- Cost estimation before download
-- Data validation (OHLC relationships, price sanity checks)
-- Parquet storage with snappy compression
+Multi-scale temporal encoding capturing financial market cycles:
 
-**Feature Engineering Module** (`src/data/features.py`):
-- 24 technical indicators across 6 semantic groups:
-  - **Price Dynamics** (4): Log-returns, high-low range, close location, open returns
-  - **Volume** (3): Log-volume, volume delta, dollar volume
-  - **Trend** (5): VWAP deviation (with RTH reset), MACD histogram, SMA deviations
-  - **Momentum** (6): RSI, CCI, +DI/-DI, ADX, Rate of Change
-  - **Volatility** (4): ATR, Bollinger %B, bandwidth, realized volatility
-  - **Flow** (2): Money Flow Index, time gap feature
-- Instance normalization support (per-sample statistics)
-- Vectorized computation for efficiency
+- **Time of Day:** Cyclical sine/cosine (288 5-min periods)
+- **Day of Week:** Learnable embeddings (Mon-Fri market effects)
+- **Seasonal Patterns:** Time2Vec [3] with learned frequencies for quarterly rebalancing, option expiry effects
 
-**Data Coverage:**
-- **Period**: June 6, 2010 - December 3, 2025 (15.5 years)
-- **Resolution**: 1-minute OHLCV bars
-- **Contract**: NQ.v.0 (volume-based continuous)
-- **Data Splits**:
-  - Training: 2010-06-06 to 2019-12-31 (~9.5 years)
-  - Validation: 2020-01-01 to 2022-12-31 (3 years)
-  - Test: 2023-01-01 to 2025-12-03 (~3 years)
+## Implementation Status
 
-### Phase 2: Dataset and Baseline Model ✓
+### ✅ Phase 1: Data Acquisition & Preprocessing (Complete)
 
-**Dataset Module** (`src/data/dataset.py`)
-- `NQFuturesDataset`: Rolling window dataset with proper padding/masking
-- Window strategy: ~6900 bars context, right-padded to T_max=7000
-- **Train stride: 60 bars (hourly stride with temporal overlap)**
-  - Generates ~52k samples vs ~450 with non-overlapping windows
-  - Trade-off: Sample efficiency for baseline training vs potential leakage
-  - See [phase2_documentation.md](docs/phase2_documentation.md) §6.1 for detailed rationale
-  - Phase 3 will include non-overlapping ablation study
-- Val/Test stride: 1 bar (full sequential coverage, no overlap)
-- Temporal features: 8-channel encoding for cyclical positional embeddings
-- Automatic normalization statistics handling
-- Efficient batch generation with DataLoader utilities
+**Deliverables:**
+- `data_loader.py` - 1-minute to 5-minute aggregation
+- `rollover_adjustment.py` - Ratio back-adjustment with validation
+- `01_data_acquisition.ipynb` - Testing notebook
 
-**Baseline Model** (`src/model/baseline.py`):
-- `InstanceNorm1d`: Per-sample, per-feature normalization with attention masking
-- `CyclicalPositionalEncoding`: Time-of-day, day-of-week, day-of-month, day-of-year
-- `BaselineTransformer`: Vanilla encoder with independent quantile heads (Phase 2)
-- Forward pass validated: (B, T=7000, V=24) → (B, H=6, Q=7)
-- Gradient flow tested: All parameters receive gradients
-- Memory efficient: <40GB VRAM on A100 with batch_size=8
+**Outputs:**
+- `nq_ohlcv_5min_aggregated.parquet` (~1.6M bars)
+- `nq_ohlcv_5min_adjusted.parquet` (ratio-adjusted)
+- `rollover_dates.csv` (~60 detected rollovers)
 
-**Testing Infrastructure**:
-- `tests/phase1_tests.ipynb`: Data acquisition and feature engineering validation
-- `tests/phase2_tests.ipynb`: Dataset, model, and integration tests
-- Comprehensive unit tests for all components
-- Performance benchmarking and shape validation
-- **IC smoke test**: Baseline Information Coefficient validation (untrained model)
+**Key Validations:**
+- ✓ OHLC relationship constraints maintained
+- ✓ Returns preservation (max diff < 1e-10)
+- ✓ Chronological ordering verified
+- ✓ Price positivity enforced
 
-**Critical Engineering Decisions:**
-- **Sampling Strategy**: Adopted stride=60 (overlapping) for baseline sample efficiency
-  - Documented in [phase2_documentation.md](docs/phase2_documentation.md) §6.1
-  - Mitigation: Val/test remain full-resolution; Phase 3 ablation planned
-- **Timezone Handling**: Converted timestamps to naive (market-local time) for consistency
-- **Feature Normalization**: Proper handling of NaN values and padding
-- **Sequence Boundaries**: Eliminated future data leakage
+### ✅ Phase 2: Feature Engineering (Complete)
 
-## Installation
+**Deliverables:**
+- `feature_engineering.py` - 24 causal features + 5 targets
+- `02_preprocessing.ipynb` - Comprehensive testing
+
+**Outputs:**
+- `nq_features_full.parquet` (24 features + 5 target horizons, ~234 MB)
+
+**Quality Metrics:**
+- Zero NaN values (after 72-bar warmup)
+- Zero infinite values
+- No high multicollinearity (max correlation: 0.94)
+- All features within expected statistical ranges
+
+**Target Statistics:**
+
+| Horizon | Mean Return | Std Dev | Ann. Sharpe |
+|---------|-------------|---------|-------------|
+| 15m     | 0.000008    | 0.00129 | 0.96        |
+| 30m     | 0.000016    | 0.00182 | 0.96        |
+| 60m     | 0.000032    | 0.00258 | 0.96        |
+| 2h      | 0.000064    | 0.00365 | 0.96        |
+| 4h      | 0.000128    | 0.00515 | 0.97        |
+
+### 🔄 Phase 3-6: In Development
+
+- **Phase 3:** PyTorch Dataset & DataLoader (24-hour sliding windows, RevIN normalization)
+- **Phase 4:** Transformer model implementation (MIGT-TVDT hybrid)
+- **Phase 5:** Training pipeline (quantile loss, validation monitoring)
+- **Phase 6:** Evaluation & backtesting (IC, CRPS, Sharpe ratio, calibration analysis)
+
+## Compute Environment
+
+**Primary:** Google Colab with A100 GPU (80GB VRAM)  
+**Secondary Resources:** 167.1 GB RAM, 12 CPU cores  
+**Storage:** Google Drive integration for data persistence
+
+Memory profile estimates:
+- Model parameters: ~10-40M (20-40 GB peak VRAM with batch size 64-256)
+- Training data: In-memory loading after initial GDrive copy
+- Checkpointing: Periodic saves to GDrive
+
+## Installation & Setup
 
 ### Prerequisites
 
-- Python 3.8+
-- Google Colab account (for A100 GPU access)
-- Databento API key (available at https://databento.com)
+```bash
+python >= 3.10
+torch >= 2.0.0
+numpy >= 1.24.0
+pandas >= 2.0.0
+```
 
 ### Dependencies
 
 ```bash
-pip install databento pandas numpy pyarrow torch scipy tqdm
+pip install -r requirements.txt
 ```
 
-### Repository Structure
+Key packages:
+- **Data:** `databento`, `pyarrow`, `fastparquet`
+- **Model:** `torch`, `einops`, `flash-attn` (optional)
+- **Training:** `wandb`, `tensorboard`, `optuna`
+- **Evaluation:** `scipy`, `scikit-learn`, `matplotlib`, `seaborn`
+
+### Google Colab Setup
+
+1. Mount Google Drive:
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+```
+
+2. Install dependencies:
+```python
+!pip install -q databento einops wandb flash-attn
+```
+
+3. Verify GPU:
+```python
+import torch
+print(f"GPU: {torch.cuda.get_device_name(0)}")
+print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+```
+
+### Data Directory Structure
 
 ```
-FuturesSL/
-├── docs/
-│   ├── gemini-research.md           # Research guide
-│   ├── grok-scientific.md           # Scientific blueprint
-│   ├── claude-engineering.md        # Engineering specifications
-│   ├── phase1_documentation.md      # Phase 1 implementation notes
-│   └── phase2_documentation.md      # Phase 2 implementation notes
+/content/drive/MyDrive/Colab Notebooks/Transformers/FP/
+├── data/
+│   ├── raw/
+│   │   ├── nq_ohlcv_1m_raw.parquet          # User-provided 1-min data
+│   │   └── rollover_dates.csv               # Generated metadata
+│   ├── interim/
+│   │   ├── nq_ohlcv_5min_aggregated.parquet
+│   │   └── nq_ohlcv_5min_adjusted.parquet
+│   └── processed/
+│       ├── nq_features_full.parquet         # 24 features + 5 targets
+│       └── column_info.csv
 ├── src/
-│   ├── __init__.py
-│   ├── data/
-│   │   ├── __init__.py
-│   │   ├── acquisition.py           # Databento download module
-│   │   ├── features.py              # Technical indicator computation
-│   │   └── dataset.py               # PyTorch Dataset/DataLoader (Phase 2)
-│   └── model/
-│       ├── __init__.py
-│       └── baseline.py              # Baseline Transformer (Phase 2)
-├── tests/
-│   ├── phase1_tests.ipynb           # Phase 1 testing notebook
-│   └── phase2_tests.ipynb           # Phase 2 testing notebook (Colab)
-├── futuresSL_prob-statement.txt     # Original problem statement
-└── README.md
+│   └── data/
+│       ├── data_loader.py
+│       ├── rollover_adjustment.py
+│       └── feature_engineering.py
+└── notebooks/
+    ├── 01_data_acquisition.ipynb
+    └── 02_preprocessing.ipynb
 ```
 
 ## Usage
 
-### Data Acquisition (Phase 1)
+### Phase 1-2: Data Preparation (Current Status)
 
 ```python
-from src.data.acquisition import NQDataAcquisition
+from src.data import DataLoader, RolloverAdjuster, FeatureEngineer
 
-# Initialize acquisition module
-acquisition = NQDataAcquisition(
-    api_key="your_databento_key",
-    output_dir="./data/raw"
+# Load and aggregate 1-min to 5-min bars
+loader = DataLoader(
+    raw_path='/path/to/nq_ohlcv_1m_raw.parquet',
+    output_dir='/path/to/interim/'
+)
+df_5min = loader.aggregate_to_5min()
+
+# Apply rollover adjustment
+adjuster = RolloverAdjuster.from_data(df_5min, threshold_pct=0.01, threshold_std=3.0)
+df_adjusted = adjuster.adjust_prices(df_5min)
+adjuster.verify_returns_preserved(df_5min, df_adjusted)
+
+# Compute features
+engineer = FeatureEngineer()
+df_features = engineer.compute_all_features(df_adjusted)
+
+# Add target variables
+horizons = {'15m': 3, '30m': 6, '60m': 12, '2h': 24, '4h': 48}
+df_final = engineer.add_targets(df_features, horizons)
+```
+
+### Phase 3+: Model Training (Planned)
+
+```python
+from src.model import MIGTTVDTModel
+from src.training import QuantileLoss, Trainer
+
+# Initialize model
+model = MIGTTVDTModel(
+    input_vars=24,
+    d_model=256,
+    n_heads=8,
+    n_layers=6,
+    horizons=5,
+    quantiles=[0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
 )
 
-# Estimate cost before downloading
-cost = acquisition.estimate_cost("2020-01-01", "2020-12-31")
-print(f"Estimated cost: ${cost:.2f}")
+# Setup training
+criterion = QuantileLoss(quantiles=model.quantiles)
+trainer = Trainer(model, criterion, optimizer='AdamW', lr=1e-4)
 
-# Download data
-df = acquisition.download_range("2020-01-01", "2020-12-31")
-
-# Save to parquet
-acquisition.save_parquet(df, "nq_2020.parquet")
+# Train with validation monitoring
+trainer.fit(train_loader, val_loader, epochs=100, early_stopping_patience=10)
 ```
 
-### Feature Engineering (Phase 1)
+## Performance Metrics
 
-```python
-from src.data.features import NQFeatureEngineer, FEATURE_COLUMNS
-import pandas as pd
+### ML Metrics
+- **Information Coefficient (IC):** Spearman correlation (predicted vs. actual)
+- **Directional Accuracy (DA):** Sign prediction accuracy
+- **CRPS:** Continuous Ranked Probability Score (distributional quality)
+- **Calibration Error:** Deviation from nominal coverage
 
-# Load raw data
-df = pd.read_parquet("./data/raw/nq_2020.parquet")
+### Financial Metrics
+- **Sharpe Ratio:** Annualized risk-adjusted returns (target > 1.5 gross)
+- **Maximum Drawdown:** Peak-to-trough decline
+- **Profit Factor:** Gross wins / gross losses
+- **Tail Metrics:** 5th/95th percentile coverage accuracy
 
-# Initialize feature engineer
-engineer = NQFeatureEngineer()
+## Scientific Foundations
 
-# Compute all 24 features
-features_df = engineer.compute_all_features(df)
+### Key Hypotheses
 
-# Compute forward return targets
-targets_df = engineer.compute_targets(df)
+**H1 (Non-Stationarity):** Instance normalization enables learning across market regimes with different volatility/price levels.
 
-# Save processed data
-features_df.to_parquet("./data/processed/nq_features_2020.parquet")
-targets_df.to_parquet("./data/processed/nq_targets_2020.parquet")
+**H2 (Multivariate Dependencies):** Variable-centric embeddings capture feature interactions (e.g., volume-RSI) more effectively than timestep embeddings.
 
-print(f"Feature columns: {FEATURE_COLUMNS}")
-print(f"Feature shape: {features_df.shape}")
+**H3 (Distributional Superiority):** Quantile regression achieves lower CRPS and better tail calibration than MSE point predictions.
+
+**H4 (Temporal Cycles):** Composite positional encodings capture intraday, weekly, and seasonal patterns missed by standard sinusoidal encodings.
+
+### Ablation Studies (Planned)
+
+| Configuration              | Modification                | Expected Impact          |
+|----------------------------|----------------------------|--------------------------|
+| No Variable Embedding      | Standard timestep tokens   | ↓ IC (entangled)         |
+| No Two-Stage Attention     | Single attention stage     | ↑ compute, ↓ performance |
+| No Instance Normalization  | LayerNorm only             | ↓ regime adaptation      |
+| No Gating (LGU)            | Remove gate mechanism      | ↑ noise, wider intervals |
+| Point Prediction (MSE)     | MSE loss instead of QR     | No uncertainty, ↑ CRPS   |
+
+## Data Considerations
+
+### Rollover Adjustment
+
+Futures contracts expire quarterly. Volume-based rollover switches to the next contract when its volume exceeds the current. This creates price discontinuities that must be adjusted:
+
+```
+Ratio Back-Adjustment:
+For rollover from Contract A to B at time t:
+  R = Price_B(t) / Price_A(t)
+  Price_historical_adjusted = Price_historical_raw × R
 ```
 
-### Dataset and Model (Phase 2)
+**Why Ratio vs. Difference:** Ratio adjustment preserves percentage returns, critical for log-return-based ML. Difference adjustment distorts returns over long periods.
 
-```python
-from src.data import create_dataloaders, FEATURE_COLUMNS
-from src.model import create_model
-import torch
+**Validation:** Log-returns are identical before/after adjustment (tolerance < 1e-10) at non-rollover timestamps.
 
-# Create dataloaders
-train_loader, val_loader, test_loader = create_dataloaders(
-    features_path='data/nq_features_v1.parquet',
-    targets_path='data/nq_targets_v1.parquet',
-    feature_columns=FEATURE_COLUMNS,
-    batch_size=8,
-)
+### Causality Enforcement
 
-# Create baseline model
-model = create_model(num_features=24, d_model=512).cuda()
+All derived features use strictly historical data:
+- Rolling windows: `rolling(window).mean()` with no forward data
+- Exponential moving averages: `ewm(span=n, adjust=False)`
+- Target variables: Computed with `.shift(-h)` but dropped during training
 
-# Forward pass
-for batch in train_loader:
-    features = batch['features'].cuda()
-    mask = batch['mask'].cuda()
-    temporal = batch['temporal_features'].cuda()
-    targets = batch['targets'].cuda()
-    
-    # Model prediction: (B, 6, 7) = (batch, horizons, quantiles)
-    predictions = model(features, mask, temporal)
-    
-    print(f"Input shape: {features.shape}")       # (8, 7000, 24)
-    print(f"Output shape: {predictions.shape}")   # (8, 6, 7)
-    break
-```
+**Critical:** The 24-hour lookback window contains only historical bars. Target computation uses future data for labeling but these columns are excluded from model inputs.
 
-### Running Tests (Colab)
+## References
 
-**Phase 1 Tests:**
-1. Upload `tests/phase1_tests.ipynb` to Google Colab
-2. Connect to A100 GPU runtime
-3. Mount Google Drive
-4. Run all cells sequentially
+[1] Y. Li et al., "Reinforcement learning with temporal and variable dependency-aware transformer for stock trading optimization," *Neural Networks*, vol. 192, p. 107905, 2025. https://arxiv.org/abs/2408.12446
 
-**Phase 2 Tests:**
-1. Upload `tests/phase2_tests.ipynb` to Google Colab
-2. Connect to A100 GPU runtime  
-3. Ensure Phase 1 data is available in Drive
-4. Run all cells sequentially
+[2] F. Gu et al., "MIGT: Memory Instance Gated Transformer Framework for Financial Portfolio Management," *arXiv preprint arXiv:2502.07280*, 2025. https://arxiv.org/abs/2502.07280
 
-Expected output: All tests passing with validation metrics.
+[3] S. M. Kazemi et al., "Time2Vec: Learning a Vector Representation of Time," *arXiv preprint arXiv:1907.05321*, 2019. https://arxiv.org/abs/1907.05321
 
-## Development Roadmap
+[4] Y. Liu et al., "iTransformer: Inverted Transformers are Effective for Time Series Forecasting," *ICLR*, 2024. https://arxiv.org/abs/2310.06625
 
-### Phase 1: Data Acquisition and Feature Engineering ✓ COMPLETE
-- ✓ Databento API integration
-- ✓ Volume-based rollover handling
-- ✓ 24 technical indicators with proper session handling
-- ✓ Comprehensive unit and integration tests
+[5] A. Vaswani et al., "Attention Is All You Need," *NeurIPS*, 2017. https://arxiv.org/abs/1706.03762
 
-### Phase 2: Dataset and Baseline Model ✓ COMPLETE
-- ✓ Rolling window sampler with padding/masking
-- ✓ Cyclical positional encoding computation
-- ✓ Train/val/test splits with proper striding
-- ✓ Instance normalization layer
-- ✓ Baseline Transformer encoder
-- ✓ Independent multi-horizon quantile heads
-- ✓ Forward pass and gradient flow validation
-
-### Phase 3: TSA + LGU Architecture (In Progress)
-- [ ] Two-Stage Attention: Temporal + Variable attention blocks
-- [ ] Lite Gate Units for noise filtering
-- [ ] Group projection (6 semantic feature groups)
-- [ ] Autoregressive multi-horizon heads with teacher forcing
-- [ ] Full Grok-SL Transformer implementation
-
-### Phase 4: Training Infrastructure (Weeks 5-6)
-- [ ] Pinball loss with monotonicity constraints
-- [ ] AdamW optimizer with cosine scheduling + warmup
-- [ ] Mixed precision training (BF16/TF32)
-- [ ] Gradient checkpointing for memory efficiency
-- [ ] WandB logging integration
-- [ ] Checkpoint save/restore
-
-### Phase 5: Evaluation Framework (Weeks 7-8)
-- [ ] CRPS (Continuous Ranked Probability Score)
-- [ ] Information Coefficient (IC)
-- [ ] Tail-weighted accuracy
-- [ ] Sharpe/Sortino ratios (backtest proxy)
-- [ ] Quantile calibration analysis
-- [ ] Ablation studies for hypothesis validation
-
-### Phase 6: Optimization and Deployment (Weeks 9-10)
-- [ ] Hyperparameter tuning (Optuna)
-- [ ] torch.compile optimization
-- [ ] Ensemble methods
-- [ ] Real-time inference pipeline
-- [ ] Model export (ONNX if needed)
-
-## Performance Targets
-
-Based on hypotheses in grok-scientific.md:
-
-| Metric | Target | Baseline Improvement |
-|--------|--------|---------------------|
-| Information Coefficient (IC) | > 0.05 | +0.03 from baseline |
-| CRPS Reduction | -25% | vs. point estimate baseline |
-| Cross-Regime Accuracy | +15-20% | via Instance Normalization |
-| Tail Accuracy (top/bottom 10%) | > 55% | vs. ~50% random |
-| Validation IC (5m horizon) | > 0.02 | Phase 2 validation criterion |
-
-## Technical Stack
-
-- **Framework**: PyTorch 2.0+ (native FlashAttention-2 planned for Phase 3)
-- **Data Format**: Parquet with Snappy compression
-- **Precision**: FP32 (Phase 2), BF16 training planned (Phase 4)
-- **Hardware**: Google Colab A100 (80GB VRAM, 167GB RAM, 12 CPU cores)
-- **Data Provider**: Databento Historical API (GLBX.MDP3 dataset)
-- **Version Control**: Git + GitHub
-- **Experiment Tracking**: WandB (Phase 4)
-
-## Scientific Foundation
-
-FuturesSL adapts insights from recent literature on transformer-based financial forecasting:
-
-1. **Memory Instance Gated Transformer (MIGT)** - Instance normalization for cross-regime generalization, Lite Gate Units for noise filtering
-2. **RL-TVDT** - Two-Stage Attention (Temporal + Variable), variable dependency modeling
-3. **PatchTST** - Evaluated but not adopted (granularity mismatch for short horizons)
-4. **Temporal Fusion Transformer (TFT)** - Multi-horizon forecasting architecture inspiration
-5. **Quantile Regression Networks** - Distributional learning for heteroskedastic returns
-
-See [gemini-research.md](docs/gemini-research.md) for complete references and theoretical justification.
-
-## Evaluation Philosophy
-
-FuturesSL bridges AI/ML and quantitative finance evaluation methodologies:
-
-**AI/ML Metrics:**
-- Continuous Ranked Probability Score (CRPS)
-- Negative Log-Likelihood (NLL)
-- Quantile calibration
-
-**Finance Metrics:**
-- Information Coefficient (Pearson/Spearman correlation)
-- Sharpe/Sortino/Omega ratios
-- Tail-weighted accuracy
-- Risk-adjusted returns
-
-This dual evaluation ensures the model is both technically sound and economically viable.
-
-## Contributing
-
-This project follows a structured peer review process:
-
-1. Research proposals reviewed by Gemini (Research Lead)
-2. Scientific formulations reviewed by Grok (Quant/ML Scientist)
-3. Engineering implementations reviewed by Claude (Engineering Lead)
-
-All changes must pass peer review from at least two AI systems before merging.
+[6] Y. Zhang and J. Yan, "Crossformer: Transformer Utilizing Cross-Dimension Dependency for Multivariate Time Series Forecasting," *ICLR*, 2023. https://openreview.net/forum?id=vSVLM2j9eie
 
 ## License
 
-[Add your license here]
+This project is provided as-is for research and educational purposes.
 
-## Citation
+## Contact
 
-If you use FuturesSL in your research, please cite:
-
-```
-@software{futuressl2025,
-  title={FuturesSL: Transformer-Based Distributional Forecasting for NQ Futures},
-  author={Multi-AI Collaborative Team: Claude (Anthropic), Gemini (Google), Grok (xAI)},
-  year={2025},
-  url={https://github.com/cjfortu/FuturesSL}
-}
-```
-
-## Acknowledgments
-
-- **Databento** for high-quality futures market data
-- **Google Colab** for A100 GPU infrastructure
-- Research foundations from MIGT, RL-TVDT, and TFT papers
+**Author:** Clemente Fortuna  
+**Project:** FuturesSL - Distributional Forecasting for NASDAQ Futures
 
 ---
 
-**Project Status**: Dev Phase 2 Complete | Active Development  
-**Last Updated**: December 2025  
-**Next Milestone**: Phase 3 - TSA + LGU Architecture
+*Last Updated: December 2025*  
+*Project Status: Phase 2 Complete - Feature Engineering Delivered*

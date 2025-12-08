@@ -1,52 +1,107 @@
+# FuturesSL .gitignore
+
+# Credentials & Sensitive Data
+credentials/
+databento.txt
+*.key
+*.pem
+
+# Data Files
+data/raw/*.parquet
+data/interim/*.parquet
+data/processed/*.parquet
+data/raw/*.csv
+data/interim/*.csv
+data/processed/*.csv
+data/**/*.h5
+data/**/*.hdf5
+
+# Model Checkpoints & Training Artifacts
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+models/*.pt
+outputs/
+wandb/
+tensorboard/
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual Environments
 venv/
 ENV/
-
-# Data files (too large for GitHub)
-data/raw/*.parquet
-data/processed/*.parquet
-*.csv
-*.h5
-*.hdf5
-
-# Model checkpoints
-checkpoints/
-*.pt
-*.pth
-*.ckpt
+env/
+.venv
 
 # Jupyter Notebook
-.ipynb_checkpoints/
-*.ipynb_checkpoints
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
 
-# IDE
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
+*~
 .DS_Store
-Thumbs.db
 
-# Logs
-logs/
+# Documentation builds
+docs/_build/
+site/
+
+# Logging
 *.log
-
-# API Keys (CRITICAL - keep private!)
-*config*key*.py
-secrets/
-.env
-
-# Google Drive mount points
-/content/
+logs/
 
 # Temporary files
 *.tmp
-*.bak
+*.temp
+.cache/
+
+# Colab
+.config/
+
+# OS
+Thumbs.db
