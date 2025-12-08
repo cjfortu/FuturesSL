@@ -1,7 +1,7 @@
 # FuturesSL: Distributional Forecasting for NASDAQ Futures
 
 **Author:** Clemente Fortuna  
-**Project Status:** Phase 2 Complete (Data Acquisition & Feature Engineering)
+**Project Status:** Phase 3 Complete (Dataset & DataLoader Implementation)
 
 ## Overview
 
@@ -35,6 +35,7 @@ Key preprocessing steps:
 - Invalid tick filtering (outliers, zero prices/volume)
 - Trading halt detection and flagging
 - Comprehensive feature engineering (24 features across 6 categories)
+- Time-based splits with purge gaps (prevents data leakage)
 
 ### Feature Engineering
 
@@ -52,29 +53,29 @@ Key preprocessing steps:
 
 All features computed causally to prevent lookahead bias.
 
-### Model Architecture (Planned - Phase 4)
+### Model Architecture (Phase 4 - In Development)
 
 ```
 Input: (Batch, Time=273-276, Variables=24)
-  â†" Padding + Masking → (Batch, 288, 24)
-  â†" Variable Embedding → (Batch, 24, D_model)
-  â†" Positional Encoding (Time of Day, Day of Week, Time2Vec)
+  ↓ Padding + Masking → (Batch, 288, 24)
+  ↓ Variable Embedding → (Batch, 24, D_model)
+  ↓ Positional Encoding (Time of Day, Day of Week, Time2Vec)
   
 [Temporal Attention Stage]
   For each variable independently:
-    â†" Self-Attention over time dimension
-    â†" Attention-weighted pooling → (Batch, 24, D_model)
+    ↓ Self-Attention over time dimension
+    ↓ Attention-weighted pooling → (Batch, 24, D_model)
   
 [Variable Attention Stage]
-  â†" Cross-attention between variables
-  â†" Gated Instance Normalization (MIGT)
-  â†" Residual connections
+  ↓ Cross-attention between variables
+  ↓ Gated Instance Normalization (MIGT)
+  ↓ Residual connections
   
 [Multi-Horizon Quantile Heads]
   For each horizon h ∈ {15m, 30m, 60m, 2h, 4h}:
-    â†" Horizon embedding
-    â†" MLP decoder
-    â†" Output: 7 quantiles (τ = 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
+    ↓ Horizon embedding
+    ↓ MLP decoder
+    ↓ Output: 7 quantiles (τ = 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
 ```
 
 **Key Design Choices:**
@@ -140,9 +141,42 @@ Multi-scale temporal encoding capturing financial market cycles:
 | 2h      | 0.000064    | 0.00365 | 0.96        |
 | 4h      | 0.000128    | 0.00515 | 0.97        |
 
-### 🔄 Phase 3-6: In Development
+### ✅ Phase 3: Dataset & DataLoader Implementation (Complete)
 
-- **Phase 3:** PyTorch Dataset & DataLoader (24-hour sliding windows, RevIN normalization)
+**Deliverables:**
+- `preprocessing.py` - Window creation, normalization, temporal splits with purge gaps
+- `dataset.py` - PyTorch Dataset and DataModule
+- `03_dataset_preparation.ipynb` - Testing notebook
+
+**Key Features:**
+- 24-hour sliding windows with padding to 288 bars
+- RevIN (Reversible Instance Normalization) per sample
+- Time-based splits with 24-hour purge gaps (prevents data leakage)
+- Attention masks for variable-length sequences
+- Temporal information extraction for positional encodings
+
+**Split Statistics:**
+
+| Split | Date Range | Samples | % |
+|-------|-----------|---------|---|
+| Train | 2010-06-07 to 2021-12-31 | ~580K | 70% |
+| Val | 2022-01-02 to 2023-12-31 | ~164K | 20% |
+| Test | 2024-01-02 to 2025-12-03 | ~85K | 10% |
+
+**Purge Gap Implementation:**
+- Train-Val gap: 24 hours (2022-01-01 excluded)
+- Val-Test gap: 24 hours (2024-01-01 excluded)
+- Total purged: ~576 bars (~0.05% of data)
+- Rationale: Prevents validation/test lookback windows from overlapping with train data
+
+**Technical Improvements (Phase 3):**
+- End-of-day timestamps for intuitive date handling
+- Purge gaps between splits (standard ML practice)
+- Low-variance feature handling in normalization
+- Comprehensive leakage validation
+
+### 🔄 Phase 4-6: In Development
+
 - **Phase 4:** Transformer model implementation (MIGT-TVDT hybrid)
 - **Phase 5:** Training pipeline (quantile loss, validation monitoring)
 - **Phase 6:** Evaluation & backtesting (IC, CRPS, Sharpe ratio, calibration analysis)
@@ -214,23 +248,30 @@ print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 │   │   └── nq_ohlcv_5min_adjusted.parquet
 │   └── processed/
 │       ├── nq_features_full.parquet         # 24 features + 5 targets
+│       ├── train_samples.parquet            # Phase 3+ (optional)
+│       ├── val_samples.parquet
+│       ├── test_samples.parquet
 │       └── column_info.csv
 ├── src/
 │   └── data/
 │       ├── data_loader.py
 │       ├── rollover_adjustment.py
-│       └── feature_engineering.py
+│       ├── feature_engineering.py
+│       ├── preprocessing.py
+│       └── dataset.py
 └── notebooks/
     ├── 01_data_acquisition.ipynb
-    └── 02_preprocessing.ipynb
+    ├── 02_preprocessing.ipynb
+    └── 03_dataset_preparation.ipynb
 ```
 
 ## Usage
 
-### Phase 1-2: Data Preparation (Current Status)
+### Phase 1-3: Data Preparation (Current Status)
 
 ```python
 from src.data import DataLoader, RolloverAdjuster, FeatureEngineer
+from src.data import DataPreprocessor, NQDataModule
 
 # Load and aggregate 1-min to 5-min bars
 loader = DataLoader(
@@ -251,9 +292,21 @@ df_features = engineer.compute_all_features(df_adjusted)
 # Add target variables
 horizons = {'15m': 3, '30m': 6, '60m': 12, '2h': 24, '4h': 48}
 df_final = engineer.add_targets(df_features, horizons)
+
+# Create dataset and dataloaders
+data_module = NQDataModule(
+    data_path='/path/to/nq_features_full.parquet',
+    batch_size=128,
+    num_workers=4
+)
+data_module.setup()
+
+train_loader = data_module.train_dataloader()
+val_loader = data_module.val_dataloader()
+test_loader = data_module.test_dataloader()
 ```
 
-### Phase 3+: Model Training (Planned)
+### Phase 4+: Model Training (Planned)
 
 ```python
 from src.model import MIGTTVDTModel
@@ -339,6 +392,33 @@ All derived features use strictly historical data:
 
 **Critical:** The 24-hour lookback window contains only historical bars. Target computation uses future data for labeling but these columns are excluded from model inputs.
 
+### Data Leakage Prevention
+
+**Purge Gaps:** 24-hour gaps between train/val and val/test splits ensure validation/test lookback windows don't overlap with training data.
+
+**Example:**
+- Train ends: 2021-12-31 23:59:59
+- Purge: 2022-01-01 (288 bars)
+- Val starts: 2022-01-02 00:00:00
+- Val window at 2022-01-02 00:00 looks back 24h to 2022-01-01 00:00
+- No overlap with train data (ends Dec 31)
+
+This is standard ML practice for time series and prevents subtle leakage through temporal context mixing.
+
+## Development Timeline
+
+| Phase | Status | Duration | Objective |
+|-------|--------|----------|-----------|
+| 1 | ✅ Complete | Week 1-2 | Data Acquisition & Preprocessing |
+| 2 | ✅ Complete | Week 3 | Feature Engineering |
+| 3 | ✅ Complete | Week 4 | Dataset & DataLoader |
+| 4 | 🔄 In Progress | Week 5-6 | Model Implementation |
+| 5 | ⏸️ Planned | Week 7 | Training Pipeline |
+| 6 | ⏸️ Planned | Week 8 | Evaluation & Analysis |
+| 7 | ⏸️ Planned | Week 9-10 | Hyperparameter Optimization |
+
+**Total Duration:** ~10 weeks (Phases 1-3 complete)
+
 ## References
 
 [1] Y. Li et al., "Reinforcement learning with temporal and variable dependency-aware transformer for stock trading optimization," *Neural Networks*, vol. 192, p. 107905, 2025. https://arxiv.org/abs/2408.12446
@@ -353,6 +433,17 @@ All derived features use strictly historical data:
 
 [6] Y. Zhang and J. Yan, "Crossformer: Transformer Utilizing Cross-Dimension Dependency for Multivariate Time Series Forecasting," *ICLR*, 2023. https://openreview.net/forum?id=vSVLM2j9eie
 
+## Documentation
+
+Comprehensive documentation is available in the `/docs` folder:
+
+- **`gemini-research.md`** - Research guide covering state-of-the-art transformer architectures, distributional forecasting methods, and quantitative finance foundations
+- **`grok-scientific.md`** - Scientific document detailing market behavior hypotheses, mathematical frameworks, and architectural concepts
+- **`claude-engineering.md`** - Engineering implementation guide with detailed specifications and phased development plan
+- **`dev_phase_1_documentation.md`** - Phase 1 implementation details and testing results
+- **`dev_phase_2_documentation.md`** - Phase 2 implementation details and feature validation
+- **`dev_phase_3_documentation.md`** - Phase 3 implementation details including purge gap fixes and normalization improvements
+
 ## License
 
 This project is provided as-is for research and educational purposes.
@@ -365,4 +456,4 @@ This project is provided as-is for research and educational purposes.
 ---
 
 *Last Updated: December 2025*  
-*Project Status: Phase 2 Complete - Feature Engineering Delivered*
+*Project Status: Phase 3 Complete - Dataset & DataLoader Delivered*
