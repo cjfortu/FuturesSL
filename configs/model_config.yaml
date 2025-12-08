@@ -1,0 +1,41 @@
+# Model configuration for MIGT-TVDT hybrid architecture
+# Per claude-engineering.md specifications with n_variables=24 (actual from Phase 2)
+
+model:
+  # Core dimensions
+  d_model: 256              # Model/embedding dimension
+  n_heads: 8                # Attention heads (d_model / n_heads = 32 per head)
+  d_ff: 1024                # Feed-forward hidden dimension (4 * d_model)
+  dropout: 0.1              # Dropout probability
+  
+  # Architecture depth
+  n_temporal_layers: 4      # Temporal attention layers
+  n_variable_layers: 2      # Variable attention layers
+  
+  # Input/output dimensions
+  max_seq_len: 288          # Maximum sequence length (padded)
+  n_variables: 24           # Input variables (4 OHLC + 20 derived from Phase 2)
+  n_horizons: 5             # Prediction horizons (15m, 30m, 60m, 2h, 4h)
+  n_quantiles: 7            # Quantiles per horizon
+
+  # Positional encoding configuration
+  positional_encoding:
+    time_of_day:
+      type: sinusoidal
+      dim: 32               # Intraday position encoding
+    day_of_week:
+      type: learnable
+      dim: 16               # Weekly patterns
+    day_of_month:
+      type: time2vec
+      dim: 16               # Monthly cycles
+    day_of_year:
+      type: time2vec
+      dim: 32               # Seasonal patterns
+    # Total: 32 + 16 + 16 + 32 = 96, projected to d_model
+
+# Quantile regression configuration
+quantile_regression:
+  quantiles: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
+  # Non-crossing guaranteed by cumulative softplus parameterization
+  # No crossing penalty needed
