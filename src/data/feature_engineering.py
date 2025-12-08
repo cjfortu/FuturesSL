@@ -79,8 +79,8 @@ class FeatureEngineer:
         Returns:
             DataFrame with all features
                 Type: pandas.DataFrame
-                Columns: Original OHLCV + 20 derived features
-                Shape: (n_bars, 25)
+                Columns: OHLC (4) + derived features (20) = 24 total
+                Shape: (n_bars, 24)
                 
         Feature computation order ensures dependencies are satisfied:
         1. Basic transforms (log returns, log volume)
@@ -163,6 +163,9 @@ class FeatureEngineer:
             df_features['volume'],
             period=self.config['volume_ma_period']
         )
+        
+        # Drop raw volume (intermediate variable only - use log_volume instead)
+        df_features = df_features.drop(columns=['volume'])
         
         return df_features
     
