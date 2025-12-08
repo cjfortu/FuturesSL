@@ -1,0 +1,51 @@
+# Training configuration for MIGT-TVDT model
+# Per claude-engineering.md Section 5 specifications
+
+training:
+  batch_size: 128               # Optimal for financial time series (research-backed)
+  gradient_accumulation_steps: 2 # Effective batch = 256
+  max_epochs: 100
+  early_stopping_patience: 10
+  early_stopping_metric: val_loss
+  mixed_precision: true         # Enable AMP for A100 optimization
+
+optimizer:
+  name: AdamW
+  lr: 1.0e-4                    # Base learning rate
+  weight_decay: 0.01            # L2 regularization
+  betas: [0.9, 0.999]           # Adam momentum parameters
+
+scheduler:
+  name: CosineAnnealingWarmRestarts
+  warmup_steps: 1000            # Linear warmup steps
+  warmup_type: linear
+  t_0: 10                       # Initial cycle length (epochs)
+  t_mult: 2                     # Cycle length multiplier after restart
+  eta_min: 1.0e-6               # Minimum learning rate
+
+regularization:
+  dropout: 0.1                  # Applied throughout model
+  gradient_clip_norm: 1.0       # Max gradient norm
+  gradient_clip_value: null     # Not used (use norm clipping)
+  label_smoothing: 0.0          # Not applicable for regression
+
+quantile_regression:
+  quantiles: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
+  crossing_weight: 0.0             # Set to 0.1 if crossing penalty desired (not needed with cumulative softplus heads)
+
+checkpointing:
+  save_top_k: 3                 # Keep top 3 checkpoints by val_loss
+  metric: val_loss
+  mode: min                     # Minimize val_loss
+
+logging:
+  backend: wandb                # wandb or tensorboard
+  project_name: nq-futures-dist
+  log_every_n_steps: 50
+  val_check_interval: 1.0       # Validate every epoch
+
+# Data loading settings
+data:
+  num_workers: 4                # DataLoader workers
+  pin_memory: true              # Pin memory for GPU transfer
+  prefetch_factor: 2            # Batches to prefetch per worker
