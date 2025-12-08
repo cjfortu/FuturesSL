@@ -29,6 +29,35 @@ Phase 2 implements comprehensive feature engineering for NQ futures data, comput
 
 ---
 
+## Implementation Note: macd_signal Removal Process
+
+**Where Removal Occurs:** In notebook (Cell 30), NOT in `feature_engineering.py`
+
+**Data Flow:**
+1. `feature_engineering.py` computes 25 features (includes `macd_signal`)
+2. Notebook detects correlation: macd/macd_signal = 0.955
+3. Notebook drops: `df_clean = df_clean.drop(columns=['macd_signal'])`
+4. Saved data: 24 features + 5 targets = **29 columns total** ✓
+
+**Column Counts:**
+```
+Before drop:  30 columns (25 features + 5 targets)
+After drop:   29 columns (24 features + 5 targets)
+Saved file:   29 columns ✓
+```
+
+**Why feature_engineering.py Still Computes It:**
+The module computes `macd_signal` but it's immediately dropped in post-processing. This is acceptable because:
+- Drop happens before saving processed data
+- Saved data is correct (24 features)
+- Model expects 24 features ✓
+- No API changes needed
+
+**Status:** Implementation correct. Feature engineering module could be updated to skip `macd_signal` computation for efficiency, but this is not required.
+
+---
+
+
 ## Features Implemented
 
 ### Feature Categories
