@@ -18,17 +18,25 @@ from typing import Dict, Any
 
 class TimeOfDayEncoding(nn.Module):
     """
-    Sinusoidal encoding for intraday bar position.
+    Sinusoidal encoding for intraday bar position using harmonic frequencies.
     
-    Uses sine/cosine pairs at multiple frequencies to encode position within
-    the trading day. The sinusoidal form ensures that bar 287 (23:55) is
-    close to bar 0 (00:00) in embedding space, capturing the cyclical nature
-    of intraday patterns.
+    FIXED: Uses integer frequency multipliers (1, 2, 3, ..., half_dim) instead of
+    geometric decay. This ensures ALL dimensions complete integer cycles within
+    288 bars, maintaining cyclical topology where bar 287 (23:55) is close to
+    bar 0 (00:00) in embedding space.
     
-    Formula: PE(t, 2i) = sin(2*pi*t / 288 * freq_i)
-             PE(t, 2i+1) = cos(2*pi*t / 288 * freq_i)
+    Mathematical basis:
+    - Standard Transformer PE uses geometric decay designed for aperiodic sequences
+    - Time-of-day is inherently periodic with period T=288 bars
+    - Integer frequencies k=1,2,3,... ensure position 287 completes ~k cycles,
+      wrapping back to position 0 with error O(1/T)
     
-    where freq_i increases geometrically to capture patterns at different scales.
+    Formula: PE(t, 2i) = sin(2*pi*t*k_i / 288)
+             PE(t, 2i+1) = cos(2*pi*t*k_i / 288)
+    where k_i = i+1 for i=0 to half_dim-1
+    
+    Strengthens Hypothesis 11 (grok-scientific.md): cyclical embeddings for
+    intraday pattern capture including overnight-to-open transitions.
     """
     
     def __init__(self, d_model: int):
@@ -42,28 +50,16 @@ class TimeOfDayEncoding(nn.Module):
         """
         super().__init__()
         self.d_model = d_model
-        
-        # Precompute frequency divisors for efficiency
-        # Use geometric progression of frequencies to capture multi-scale patterns
-        # Div[i] = 288 / (2^(i * scale_factor)) where scale_factor spreads frequencies
         half_dim = d_model // 2
         
-        # Frequencies: from 1 cycle per day to higher frequencies
-        # div_term creates denominators that increase exponentially
-        div_term = torch.exp(
-            torch.arange(0, half_dim, dtype=torch.float32) * 
-            (-np.log(10000.0) / half_dim)
-        )
-        
-        # Register as buffer (not trainable, but moves with model to GPU)
-        self.register_buffer('div_term', div_term)
+        # Integer frequency multipliers: 1, 2, 3, ..., half_dim cycles per day
+        # Ensures all dimensions wrap at T=288 for true periodicity
+        frequencies = torch.arange(1, half_dim + 1, dtype=torch.float32)
+        self.register_buffer('frequencies', frequencies)
         
     def forward(self, bar_indices: torch.Tensor) -> torch.Tensor:
         """
         Compute sinusoidal encoding for bar positions.
-        
-        The encoding captures intraday cyclical patterns. Bar 0 and bar 287
-        will have similar encodings due to the sinusoidal nature.
         
         Args:
             bar_indices: Integer tensor of bar positions within day
@@ -75,18 +71,19 @@ class TimeOfDayEncoding(nn.Module):
             Positional encoding tensor
                 Type: torch.Tensor (float32)
                 Shape: (B, T, d_model)
+                
+        Continuity validation:
+            dist(PE(0), PE(287)) < 1.0 (wraps to start)
+            dist(PE(0), PE(144)) > 5.0 (opposite side of day)
         """
-        # Normalize to [0, 2*pi] for one complete cycle per day
-        # Shape: (B, T) -> (B, T, 1)
-        position = bar_indices.float().unsqueeze(-1)
-        
-        # Scale by 2*pi/288 for daily cycle, then multiply by frequencies
-        # Shape: (B, T, 1) * (half_dim,) -> (B, T, half_dim)
-        angles = position * (2 * np.pi / 288.0) * self.div_term
+        # Normalize position and compute angles with harmonic frequencies
+        # position / 288 gives [0, 1) range for fundamental cycle
+        position = bar_indices.float().unsqueeze(-1)  # (B, T, 1)
+        angles = (2 * np.pi / 288.0) * position * self.frequencies  # (B, T, half_dim)
         
         # Interleave sin and cos: [sin_0, cos_0, sin_1, cos_1, ...]
-        # Shape: (B, T, d_model)
-        pe = torch.zeros(*bar_indices.shape, self.d_model, device=bar_indices.device)
+        pe = torch.zeros(bar_indices.shape + (self.d_model,), 
+                        device=bar_indices.device, dtype=torch.float32)
         pe[..., 0::2] = torch.sin(angles)
         pe[..., 1::2] = torch.cos(angles)
         
