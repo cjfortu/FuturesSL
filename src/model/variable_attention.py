@@ -9,6 +9,11 @@ Implements cross-variable self-attention to learn inter-variable correlations:
 Per scientific document Section 4.1, this is the second stage of the two-stage
 attention mechanism, applied after temporal aggregation has collapsed the time
 dimension to (B, V, D).
+
+Memory Note:
+Uses scaled_dot_product_attention for consistency with temporal attention,
+though memory impact is minimal since V=24 is small. The attention matrix
+(B, H, V, V) = (64, 8, 24, 24) is only ~1.2 MB per layer.
 """
 
 import torch
@@ -28,6 +33,7 @@ class VariableAttentionBlock(nn.Module):
     - Liquidity impact on momentum
     
     Standard transformer block with multi-head attention and feed-forward.
+    Uses scaled_dot_product_attention for Flash Attention compatibility.
     """
     
     def __init__(
@@ -61,6 +67,7 @@ class VariableAttentionBlock(nn.Module):
         self.d_model = d_model
         self.n_heads = n_heads
         self.d_head = d_model // n_heads
+        self.dropout_p = dropout
         
         # Multi-head self-attention
         self.q_proj = nn.Linear(d_model, d_model)
@@ -82,7 +89,6 @@ class VariableAttentionBlock(nn.Module):
         self.norm2 = nn.LayerNorm(d_model)
         
         self.dropout = nn.Dropout(dropout)
-        self.scale = math.sqrt(self.d_head)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -112,23 +118,22 @@ class VariableAttentionBlock(nn.Module):
         K = self.k_proj(x_norm)
         V_attn = self.v_proj(x_norm)
         
-        # Reshape for multi-head: (B, V, D) -> (B, V, n_heads, d_head) -> (B, n_heads, V, d_head)
+        # Reshape for multi-head: (B, V, D) -> (B, n_heads, V, d_head)
         Q = Q.view(B, V, self.n_heads, self.d_head).transpose(1, 2)
         K = K.view(B, V, self.n_heads, self.d_head).transpose(1, 2)
         V_attn = V_attn.view(B, V, self.n_heads, self.d_head).transpose(1, 2)
         
-        # Attention scores: (B, n_heads, V, V)
-        attn_scores = torch.matmul(Q, K.transpose(-2, -1)) / self.scale
+        # Use scaled_dot_product_attention for Flash Attention compatibility
+        # No mask needed for variable attention (all variables are valid)
+        attn_output = F.scaled_dot_product_attention(
+            Q, K, V_attn,
+            attn_mask=None,
+            dropout_p=self.dropout_p if self.training else 0.0,
+            is_causal=False
+        )
         
-        # Softmax and dropout
-        attn_probs = F.softmax(attn_scores, dim=-1)
-        attn_probs = self.dropout(attn_probs)
-        
-        # Apply attention: (B, n_heads, V, d_head)
-        attn_output = torch.matmul(attn_probs, V_attn)
-        
-        # Reshape: (B, n_heads, V, d_head) -> (B, V, n_heads, d_head) -> (B, V, D)
-        attn_output = attn_output.transpose(1, 2).reshape(B, V, D)
+        # Reshape: (B, n_heads, V, d_head) -> (B, V, D)
+        attn_output = attn_output.transpose(1, 2).contiguous().reshape(B, V, D)
         attn_output = self.out_proj(attn_output)
         
         # Residual connection
