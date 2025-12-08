@@ -8,6 +8,32 @@
 
 ## Updates & Changes
 
+### Update 3: collate_fn bar_in_day Padding Fix
+
+**Date:** December 2025  
+**Issue:** Shape mismatch between `bar_in_day` and `features` tensors
+
+**Problem:** Original `collate_fn` padded `bar_in_day` to `max_len` within each batch (273-276), but `features` is always padded to 288. This causes broadcasting errors in Phase 4 model when positional encodings are added to variable embeddings.
+
+**Root Cause:** 
+```python
+# OLD - variable padding per batch
+max_len = max(len(b) for b in bar_in_day_list)
+```
+
+**Fix Applied:**
+```python
+# NEW - fixed padding to match features
+MAX_SEQ_LEN = 288  # Must match features padding
+```
+
+**Impact:** All batched outputs now have consistent shapes:
+- `features`: (B, 288, 24)
+- `attention_mask`: (B, 288)
+- `bar_in_day`: (B, 288) ← Fixed
+
+**Verification:** Phase 4 model forward pass now executes without shape errors.
+
 ### Temporal Split Purge Gap Fix
 
 **Date:** December 2025  

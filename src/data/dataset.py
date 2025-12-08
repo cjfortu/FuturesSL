@@ -140,12 +140,12 @@ def collate_fn(batch: List[Dict]) -> Dict:
     
     # Handle variable-length bar_in_day
     bar_in_day_list = [s['bar_in_day'] for s in batch]
-    max_len = max(len(b) for b in bar_in_day_list)
-    
-    # Pad to max length (pad with 0s at start)
+    # CHANGE: Pad bar_in_day to max_seq_len=288, not just max_len in batch
+    MAX_SEQ_LEN = 288  # Should match features padding
+
     padded_bar_in_day = []
     for b in bar_in_day_list:
-        pad_len = max_len - len(b)
+        pad_len = MAX_SEQ_LEN - len(b)
         if pad_len > 0:
             padded = torch.cat([torch.zeros(pad_len, dtype=torch.int32), b])
         else:
