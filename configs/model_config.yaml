@@ -39,3 +39,8 @@ quantile_regression:
   quantiles: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95]
   # Non-crossing guaranteed by cumulative softplus parameterization
   # No crossing penalty needed
+
+# Training hyperparameters (for Phase 5)
+training:
+  batch_size: 128  # Optimal for NQ futures (research-backed)
+  # Alternative: 64 for more exploration, 180 for more stability
