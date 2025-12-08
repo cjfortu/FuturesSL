@@ -22,7 +22,7 @@ Comprehensive test notebook: `/notebooks/04_model_testing.ipynb`
 - 10 test suites covering all components
 - GPU memory profiling (<75GB @ B=128)
 - Phase 3 integration verification
-- Save/load validation
+- Save/load validation (UPDATED 2025-12-08)
 
 ### 3. Configuration
 Model configuration: `/configs/model_config.yaml`
@@ -48,6 +48,25 @@ Total: 96D projected to d_model=256
 4. **Quantile Heads:** Non-crossing predictions for 5 horizons x 7 quantiles
 
 ## Updates/Changes
+
+### 2025-12-08: Test 10 Save/Load Fix
+**Issue:** Test 10 failed with assertion error: output difference = 0.104 after model save/load
+
+**Root Cause:** Train/eval mode mismatch
+- Pre-save forward pass: Model in training mode (dropout active)
+- Post-load forward pass: Model in eval mode (dropout disabled)
+- Dropout randomly zeros ~10% of activations in training mode, creating stochastic outputs
+- Even with `torch.no_grad()`, dropout remains active in training mode
+
+**Fix:** Add `model.eval()` before first forward pass in Test 10:
+```python
+model = MIGT_TVDT(model_config).to(device)
+model.eval()  # Ensures deterministic behavior for both forward passes
+```
+
+**Result:** Output difference reduced from ~0.104 to <1e-6, test passes
+
+**Note:** No module changes required. Architecture correctly registers all parameters in `state_dict()`. The issue was purely test-related, ensuring both forward passes use identical deterministic behavior.
 
 ### 2025-12-08: Flash Attention Optimization
 **Issue:** Test 8 showed 77.55GB at B=64 (manual attention implementation)
@@ -153,7 +172,7 @@ Already resolved in Phase 3: `collate_fn` pads to 288.
 ### Memory Complexity Comparison
 
 | Operation | Manual MHA | Flash Attention |
-|-----------|-----------|-----------------| 
+|-----------|-----------|-----------------|
 | attn_scores | O(B×V×H×T²) | O(B×V×H×T) |
 | attn_probs | O(B×V×H×T²) | (fused) |
 | Memory/layer | ~8 GB | ~0.4 GB |
