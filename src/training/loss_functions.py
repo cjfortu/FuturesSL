@@ -306,6 +306,10 @@ class CombinedQuantileLoss(nn.Module):
         """
         Compute detailed metrics for logging.
         
+        Handles device mismatches by moving predictions/targets to match
+        loss function's device. This supports the trainer's pattern of
+        collecting validation data on CPU for memory efficiency.
+        
         Args:
             predictions: (B, H, Q)
             targets: (B, H)
@@ -313,6 +317,13 @@ class CombinedQuantileLoss(nn.Module):
         Returns:
             Dictionary with per-quantile and per-horizon losses
         """
+        # Ensure predictions and targets are on same device as loss function
+        # Trainer collects validation data on CPU to save GPU memory; we move
+        # temporarily to loss function's device for computation, then extract scalars
+        device = self.pinball.quantiles.device
+        predictions = predictions.to(device)
+        targets = targets.to(device)
+        
         metrics = {}
         
         # Per-quantile losses

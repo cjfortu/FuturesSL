@@ -77,7 +77,27 @@ Implementation of training pipeline for MIGT-TVDT model with mixed precision tra
 
 ## Update Log
 
-### 2025-12-08: Device Handling Fix
+### 2025-12-08: Validation Metrics Device Handling Fix
+**Issue**: `RuntimeError: Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu!` in Test 4 (Validation Step)
+
+**Root Cause**: Trainer intentionally moves validation predictions/targets to CPU (lines 479-480 in `_validate()`) to conserve GPU memory on large validation sets. When `get_metrics()` is called with CPU tensors, it attempts operations using `self.pinball.quantiles` buffer (on GPU), causing device mismatch in `per_quantile_loss()` and `per_horizon_loss()`.
+
+**Fix Applied**:
+- **`loss_functions.py` lines 316-320**: Added device synchronization in `get_metrics()`
+  ```python
+  # Ensure predictions and targets are on same device as loss function
+  # Trainer collects validation data on CPU to save GPU memory; we move
+  # temporarily to loss function's device for computation, then extract scalars
+  device = self.pinball.quantiles.device
+  predictions = predictions.to(device)
+  targets = targets.to(device)
+  ```
+
+**Rationale**: Trainer's CPU collection pattern is intentional and memory-efficient. Module must handle device mismatches transparently. Moving predictions/targets to loss function's device is optimal because: (1) no API changes required, (2) temporary GPU transfer is negligible (~1-2MB on 80GB GPU), (3) metrics extract to Python floats via `.item()` anyway.
+
+**Alternative Considered**: Moving `self.quantiles` to CPU (suggested by Gemini) would require refactoring `per_quantile_loss()` and `per_horizon_loss()` to accept quantiles as parameter - larger API change for minimal benefit.
+
+### 2025-12-08: Device Handling Fix (Initial)
 **Issue**: `RuntimeError: Expected all tensors to be on the same device` in Test 3
 
 **Root Cause**: Loss function module not moved to training device. While `quantiles` tensor is correctly registered as buffer via `register_buffer()`, the module itself must be moved to device for buffer to transfer.
