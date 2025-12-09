@@ -23,10 +23,10 @@ Traditional point-forecast models fail to capture the uncertainty inherent in fi
 3. **Trading Strategy Integration:** Position sizing based on confidence intervals
 4. **Regime Adaptation:** Instance normalization handles non-stationary market regimes
 
-## Technical Architecture
-
+## Technical Architectureadsf
+adsf
 ### Model Architecture Diagram
-
+adsf
 ![MIGT-TVDT Architecture](https://github.com/cjfortu/FuturesSL/blob/master/evaluation_results/migt_tvdt_architecture.png)
 
 The architecture implements a hybrid MIGT-TVDT design with the following key stages:
