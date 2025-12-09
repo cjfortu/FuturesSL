@@ -1,5 +1,4 @@
 # Training configuration for MIGT-TVDT model
-# Per claude-engineering.md Section 5 specifications
 
 training:
   batch_size: 192               # Default 128 optimal for financial time series, increased for runtime purposes only

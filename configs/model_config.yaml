@@ -1,5 +1,4 @@
 # Model configuration for MIGT-TVDT hybrid architecture
-# Per claude-engineering.md specifications with n_variables=24 (actual from Phase 2)
 
 model:
   # Core dimensions
