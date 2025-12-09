@@ -1888,10 +1888,23 @@ def test_quantile_head_non_crossing():
 - [ ] Gradient clipping prevents instability
 - [ ] TensorBoard/WandB logging functional
 
-**Training Notebook Structure:**
+**Training Configuration:**
 
+Default production settings:
+- Batch size: 128 (optimal for time series)
+- Gradient accumulation: 2 (effective batch = 256)
+- Max epochs: 100
+- Early stopping: 10 epochs patience
+
+Development/tuning settings for faster iteration:
+- Increase `training.batch_size: 192` (~30% faster per epoch)
+- Set `data.subsample_fraction: 0.25` (4× fewer samples)
+- Combined: ~5× faster for hyperparameter sweeps
+
+**Training Notebook Structure:**
 ```python
-# Notebook: 04_model_training.ipynb
+# Notebook: 05_training.ipynb (Dev Phase 5 test notebook)
+# Notebook: 06_full_training.ipynb (Production training)
 
 # Cell 1: Copy data to VM for faster I/O
 !cp -r /content/drive/MyDrive/Colab\ Notebooks/Transformers/FP/data/processed/*.parquet /content/data/
@@ -1900,7 +1913,7 @@ def test_quantile_head_non_crossing():
 import yaml
 from src.model.migt_tvdt import MIGT_TVDT
 from src.data.dataset import NQDataModule
-from src.training.trainer import Trainer
+from src.training.trainer import create_trainer
 
 # Load configs
 with open('configs/model_config.yaml') as f:
@@ -1911,17 +1924,24 @@ with open('configs/training_config.yaml') as f:
 # Cell 3: Initialize
 model = MIGT_TVDT(model_config['model'])
 data_module = NQDataModule(
-    data_dir=Path('/content/data'),
-    batch_size=train_config['training']['batch_size']
+    data_path=Path('/content/data/nq_features_full.parquet'),
+    batch_size=train_config['training']['batch_size'],
+    num_workers=train_config['data']['num_workers'],
+    pin_memory=train_config['data']['pin_memory'],
+    train_end="2021-12-31",
+    val_end="2023-12-31",
+    subsample_fraction=train_config['data'].get('subsample_fraction'),
+    subsample_seed=train_config['data'].get('subsample_seed', 42)
 )
 data_module.setup()
 
 # Cell 4: Train
-trainer = Trainer(
+trainer = create_trainer(
     model=model,
-    config=train_config,
+    config={**model_config, **train_config},
     data_module=data_module,
-    output_dir=Path('/content/outputs')
+    output_dir=Path('/content/outputs'),
+    use_wandb=False
 )
 
 history = trainer.train()

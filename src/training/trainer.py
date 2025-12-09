@@ -23,6 +23,7 @@ from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 import json
 import time
+from tqdm import tqdm
 
 from .loss_functions import CombinedQuantileLoss
 from .scheduler import WarmupCosineScheduler
@@ -307,7 +308,15 @@ class Trainer:
         
         self.optimizer.zero_grad()
         
-        for batch_idx, batch in enumerate(self.train_loader):
+        # Create progress bar for training batches
+        pbar = tqdm(
+            enumerate(self.train_loader),
+            total=len(self.train_loader),
+            desc=f"Epoch {self.current_epoch+1} [Train]",
+            leave=False
+        )
+        
+        for batch_idx, batch in pbar:
             # Move batch to device
             batch = self._batch_to_device(batch)
             
@@ -315,6 +324,9 @@ class Trainer:
             loss = self._train_step(batch)
             total_loss += loss.item() * self.grad_accum_steps  # Undo scaling
             n_batches += 1
+            
+            # Update progress bar with current loss
+            pbar.set_postfix({'loss': f"{total_loss / n_batches:.6f}"})
             
             # Optimizer step after gradient accumulation
             if (batch_idx + 1) % self.grad_accum_steps == 0:
@@ -407,7 +419,15 @@ class Trainer:
         all_predictions = []
         all_targets = []
         
-        for batch in self.val_loader:
+        # Create progress bar for validation batches
+        pbar = tqdm(
+            self.val_loader,
+            total=len(self.val_loader),
+            desc=f"Epoch {self.current_epoch+1} [Val]",
+            leave=False
+        )
+        
+        for batch in pbar:
             batch = self._batch_to_device(batch)
             
             # Prepare temporal info
@@ -432,6 +452,9 @@ class Trainer:
             )
             total_loss += loss_dict['total'].item()
             n_batches += 1
+            
+            # Update progress bar with current loss
+            pbar.set_postfix({'loss': f"{total_loss / n_batches:.6f}"})
             
             # Collect for metrics
             all_predictions.append(outputs['quantiles'].cpu())

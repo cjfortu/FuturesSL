@@ -162,6 +162,50 @@ quantile_regression:
   crossing_weight: 0.0  # Disabled - heads guarantee non-crossing
 ```
 
+## Development & Tuning Options
+
+For faster iteration during hyperparameter tuning and experimentation, two methods reduce training time without affecting model architecture or validation/test evaluation:
+
+### 1. Increased Batch Size
+The default `batch_size: 128` is optimal for production. For faster development cycles, increase to `192`:
+```yaml
+training:
+  batch_size: 192  # Faster training (default: 128)
+```
+
+**Impact:**
+- Training time: ~30% reduction per epoch
+- Effective batch size: 192 × 2 = 384 (with gradient accumulation)
+- Memory usage: Still comfortable on A100 (peak ~25 GB)
+- Convergence: May require slight learning rate adjustment for production
+
+### 2. Training Data Subsampling
+Randomly sample a fraction of training data while preserving full DataFrame for lookback windows:
+```yaml
+data:
+  subsample_fraction: 0.25  # Train on 25% of data (default: null = 100%)
+  subsample_seed: 42        # For reproducibility
+```
+
+**Impact:**
+- Training time: Linear reduction (25% data = 4× faster)
+- Full lookback preserved: All 24-hour windows intact
+- Validation/test unchanged: Always evaluated on full sets
+- Use case: Quick architecture experiments, hyperparameter sweeps
+
+**Combined Effect:**
+- `batch_size: 192` + `subsample_fraction: 0.25` → ~5× faster training
+- Useful for rapid prototyping before full production runs
+
+**Production Training:**
+Set both to defaults for final model:
+```yaml
+training:
+  batch_size: 128
+data:
+  subsample_fraction: null
+```
+
 ## API Examples
 
 ### Basic Training

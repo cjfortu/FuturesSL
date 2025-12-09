@@ -33,7 +33,9 @@ class NQFuturesDataset(Dataset):
         feature_cols: List[str],
         target_cols: List[str],
         preprocessor: DataPreprocessor,
-        skip_first_n: int = 288  # Skip first 24h (no full lookback)
+        skip_first_n: int = 288,  # Skip first 24h (no full lookback)
+        subsample_fraction: Optional[float] = None,  # NEW
+        subsample_seed: int = 42                      # NEW
     ):
         """
         Initialize dataset.
@@ -44,8 +46,10 @@ class NQFuturesDataset(Dataset):
             target_cols: List of target column names
             preprocessor: DataPreprocessor instance
             skip_first_n: Skip first N bars (insufficient history)
+            subsample_fraction: Use only this fraction of samples (None = all)
+            subsample_seed: Random seed for subsampling reproducibility
         """
-        self.df = df
+        self.df = df  # Keep FULL DataFrame for lookback windows
         self.feature_cols = feature_cols
         self.target_cols = target_cols
         self.preprocessor = preprocessor
@@ -61,6 +65,21 @@ class NQFuturesDataset(Dataset):
         
         # Filter to skip first N
         self.valid_indices = valid_positions[valid_positions >= skip_first_n]
+        
+        # NEW: Subsample prediction points (not data!)
+        if subsample_fraction is not None:
+            if not (0.0 < subsample_fraction <= 1.0):
+                raise ValueError(f"subsample_fraction must be in (0, 1], got {subsample_fraction}")
+            
+            n_original = len(self.valid_indices)
+            np.random.seed(subsample_seed)
+            n_subsample = int(n_original * subsample_fraction)
+            
+            # Randomly sample indices, then sort to preserve temporal order
+            subsample_positions = np.sort(
+                np.random.choice(n_original, n_subsample, replace=False)
+            )
+            self.valid_indices = self.valid_indices[subsample_positions]
         
     def __len__(self) -> int:
         return len(self.valid_indices)
@@ -181,7 +200,9 @@ class NQDataModule:
         pin_memory: bool = True,
         max_seq_len: int = 288,
         train_end: str = "2021-12-31",
-        val_end: str = "2023-12-31"
+        val_end: str = "2023-12-31",
+        subsample_fraction: Optional[float] = None,  # NEW
+        subsample_seed: int = 42                      # NEW
     ):
         """
         Initialize data module.
@@ -196,6 +217,8 @@ class NQDataModule:
             max_seq_len: Maximum sequence length for padding
             train_end: Training split end date
             val_end: Validation split end date
+            subsample_fraction: Use only this fraction of training samples (None = all)
+            subsample_seed: Random seed for subsampling reproducibility
         """
         self.data_path = Path(data_path)
         self.batch_size = batch_size
@@ -204,6 +227,8 @@ class NQDataModule:
         self.max_seq_len = max_seq_len
         self.train_end = train_end
         self.val_end = val_end
+        self.subsample_fraction = subsample_fraction  # NEW
+        self.subsample_seed = subsample_seed          # NEW
         
         # Will be set in setup()
         self.df = None
@@ -254,15 +279,22 @@ class NQDataModule:
             train_df, val_df, test_df, tolerance_hours=24
         )
         
-        # Create datasets
+        # Create datasets - subsample ONLY training
         self.train_dataset = NQFuturesDataset(
-            train_df, self.feature_cols, self.target_cols, self.preprocessor
+            train_df, 
+            self.feature_cols, 
+            self.target_cols, 
+            self.preprocessor,
+            subsample_fraction=self.subsample_fraction,  # NEW
+            subsample_seed=self.subsample_seed            # NEW
         )
         self.val_dataset = NQFuturesDataset(
             val_df, self.feature_cols, self.target_cols, self.preprocessor
+            # No subsampling for validation
         )
         self.test_dataset = NQFuturesDataset(
             test_df, self.feature_cols, self.target_cols, self.preprocessor
+            # No subsampling for test
         )
         
         print(f"\nDataset sizes:")

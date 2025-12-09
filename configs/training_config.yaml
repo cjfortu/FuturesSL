@@ -44,8 +44,9 @@ logging:
   log_every_n_steps: 50
   val_check_interval: 1.0       # Validate every epoch
 
-# Data loading settings
 data:
-  num_workers: 4                # DataLoader workers
-  pin_memory: true              # Pin memory for GPU transfer
-  prefetch_factor: 2            # Batches to prefetch per worker
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  subsample_fraction: 0.25       # default "null". e.g., 0.25 for 25% of training samples
+  subsample_seed: 42
