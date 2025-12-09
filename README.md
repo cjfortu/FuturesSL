@@ -1,7 +1,7 @@
 # FuturesSL: Distributional Forecasting for NASDAQ Futures
 
 **Author:** Clemente Fortuna  
-**Project Status:** Phase 4 Complete (Model Architecture Implementation)
+**Project Status:** Dev Phases 1-6 Complete - Initial Training Results Obtained
 
 ## Overview
 
@@ -54,7 +54,7 @@ Key preprocessing steps:
 
 All features computed causally to prevent lookahead bias.
 
-### Model Architecture (Phase 4 - Complete)
+### Model Architecture
 
 ```
 Input: (Batch, Time=273-276, Variables=24)
@@ -178,7 +178,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 **Split Statistics:**
 
 | Split | Date Range | Samples | % |
-|-------|-----------|---------|------|
+|-------|-----------|---------|---------|
 | Train | 2010-06-07 to 2021-12-31 | ~580K | 70% |
 | Val | 2022-01-02 to 2023-12-31 | ~164K | 20% |
 | Test | 2024-01-02 to 2025-12-03 | ~85K | 10% |
@@ -204,7 +204,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 
 **Key Achievements:**
 - Flash Attention implementation reduces memory from 77GB (manual) to 35GB at batch_size=64
-- Batch size 128 achieves ~70GB VRAM usage (88% A100 utilization, safe margin for Phase 5)
+- Batch size 128 achieves ~70GB VRAM usage (88% A100 utilization, safe margin for training)
 - All 10 test suites passing (architecture, positional encoding, attention mechanisms, quantile heads, save/load, integration)
 - Phase 3 integration verified (dataset outputs compatible with model inputs)
 - Model parameters: ~10-40M (varies with configuration)
@@ -221,10 +221,75 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - Non-crossing quantile outputs via cumulative softplus parameterization
 - Full PyTorch 2.0+ SDPA compatibility
 
-### 🔄 Phase 5-6: In Development
+### ✅ Phase 5: Training Pipeline (Complete)
 
-- **Phase 5:** Training pipeline (quantile loss, validation monitoring, optimizer configuration)
-- **Phase 6:** Evaluation & backtesting (IC, CRPS, Sharpe ratio, calibration analysis)
+**Deliverables:**
+- `loss_functions.py` - Quantile regression loss with per-quantile/horizon breakdowns
+- `scheduler.py` - Learning rate scheduling (warmup + cosine annealing)
+- `trainer.py` - Complete training orchestration with checkpointing and early stopping
+- `training_config.yaml` - Training hyperparameters
+- `05_training.ipynb` - Unit and integration testing
+- `05_full_training.ipynb` - Production training execution
+
+**Key Features:**
+- **Mixed Precision Training (AMP):** Automatic on A100 for faster training
+- **Gradient Accumulation:** Effective batch size 256 (128 × 2)
+- **Learning Rate Schedule:** Linear warmup (1000 steps) + cosine annealing with restarts
+- **Gradient Clipping:** Global norm clipping at 1.0
+- **Early Stopping:** Patience 10 epochs, min delta 1e-5
+- **Checkpointing:** Latest, best, and top-3 epoch checkpoints
+- **Optional WandB Integration:** For experiment tracking
+
+**Initial Training Results (10% Subsample, 4 Epochs):**
+- **Training Duration:** ~15 minutes on A100 (with 10% data subsample)
+- **Best Epoch:** 3 (val_loss: 0.014659)
+- **Model Size:** 82.7 MB
+- **Training Approach:** Rapid prototyping run to validate pipeline
+- **Next Steps:** Full-scale training on 100% data for production model
+
+**Metrics Computed:**
+- Per-quantile coverage (calibration check)
+- PICP-80 (80% prediction interval coverage)
+- Mean interval widths (50% and 80%)
+- Per-quantile and per-horizon loss breakdowns
+
+### ✅ Phase 6: Evaluation & Analysis (Complete)
+
+**Deliverables:**
+- `metrics.py` - Distributional (CRPS, calibration), point (IC, DA), and financial metrics (Sharpe, MDD)
+- `calibration.py` - Calibration analysis with reliability diagrams and PIT histograms
+- `backtest.py` - Signal generation and multi-horizon backtesting
+- `inference.py` - Model prediction and evaluation pipeline
+- `06_evaluation.ipynb` - Comprehensive testing notebook
+
+**Distributional Metrics:**
+- **CRPS:** Continuous Ranked Probability Score (approximated via quantile loss)
+- **Calibration Error:** Per-quantile coverage deviation
+- **PICP:** Prediction Interval Coverage Probability (80% intervals)
+- **MPIW:** Mean Prediction Interval Width (sharpness metric)
+
+**Point Metrics:**
+- **IC:** Spearman Information Coefficient (rank correlation)
+- **DA:** Directional Accuracy (sign prediction)
+- **RMSE/MAE:** Root Mean Squared Error and Mean Absolute Error
+
+**Financial Metrics:**
+- **Sharpe Ratio:** Risk-adjusted returns (annualized)
+- **Sortino Ratio:** Downside deviation only
+- **Calmar Ratio:** Return / Max Drawdown
+- **Maximum Drawdown:** Largest peak-to-trough decline
+- **Profit Factor:** Gross wins / gross losses
+
+**Backtesting Strategy:**
+- **Signal Generation:** Direction from median prediction, size inversely proportional to interval width
+- **Multi-Horizon Comparison:** Comparative backtest across all 5 horizons
+- **Risk Filters:** Max interval width threshold, minimum signal strength
+- **Returns:** Gross (pre-transaction costs)
+
+**Calibration Analysis:**
+- **Reliability Diagrams:** Expected vs. observed quantile coverage
+- **PIT Histograms:** Probability Integral Transform uniformity check
+- **Coverage by Horizon:** Per-horizon calibration breakdown
 
 ## Compute Environment
 
@@ -306,6 +371,11 @@ print(f"CUDA: {torch.version.cuda}")
 │       ├── val_samples.parquet
 │       ├── test_samples.parquet
 │       └── column_info.csv
+├── outputs/
+│   ├── checkpoint_best.pt                   # Best model weights
+│   ├── checkpoint_latest.pt                 # For resuming training
+│   ├── training_history.json                # Loss curves
+│   └── training_curves.png                  # Visualization
 ├── src/
 │   ├── data/
 │   │   ├── data_loader.py
@@ -313,21 +383,34 @@ print(f"CUDA: {torch.version.cuda}")
 │   │   ├── feature_engineering.py
 │   │   ├── preprocessing.py
 │   │   └── dataset.py
-│   └── model/
-│       ├── positional_encodings.py
-│       ├── embeddings.py
-│       ├── temporal_attention.py
-│       ├── variable_attention.py
-│       ├── gated_instance_norm.py
-│       ├── quantile_heads.py
-│       └── migt_tvdt.py
+│   ├── model/
+│   │   ├── positional_encodings.py
+│   │   ├── embeddings.py
+│   │   ├── temporal_attention.py
+│   │   ├── variable_attention.py
+│   │   ├── gated_instance_norm.py
+│   │   ├── quantile_heads.py
+│   │   └── migt_tvdt.py
+│   ├── training/
+│   │   ├── loss_functions.py
+│   │   ├── scheduler.py
+│   │   └── trainer.py
+│   └── evaluation/
+│       ├── metrics.py
+│       ├── calibration.py
+│       ├── backtest.py
+│       └── inference.py
 ├── configs/
-│   └── model_config.yaml
+│   ├── model_config.yaml
+│   └── training_config.yaml
 └── notebooks/
     ├── 01_data_acquisition.ipynb
     ├── 02_preprocessing.ipynb
     ├── 03_dataset_preparation.ipynb
-    └── 04_model_testing.ipynb
+    ├── 04_model_testing.ipynb
+    ├── 05_training.ipynb
+    ├── 05_full_training.ipynb
+    └── 06_evaluation.ipynb
 ```
 
 ## Usage
@@ -398,10 +481,11 @@ predictions = model(features, mask, temporal_info)
 # predictions: (B, n_horizons, n_quantiles) = (B, 5, 7)
 ```
 
-### Phase 5: Model Training (Planned)
+### Phase 5: Model Training
 
 ```python
 from src.training import QuantileLoss, Trainer
+import torch
 
 # Setup training
 criterion = QuantileLoss(quantiles=config['quantile_regression']['quantiles'])
@@ -421,6 +505,47 @@ trainer.fit(
     epochs=100,
     early_stopping_patience=10,
     checkpoint_dir='/path/to/checkpoints'
+)
+```
+
+### Phase 6: Model Evaluation
+
+```python
+from src.evaluation import run_evaluation, format_evaluation_report
+from src.evaluation import CalibrationByHorizon, MultiHorizonBacktester
+import torch
+
+# Load best checkpoint
+checkpoint = torch.load('/path/to/checkpoint_best.pt')
+model.load_state_dict(checkpoint['model_state_dict'])
+model.eval()
+
+# Run comprehensive evaluation
+results = run_evaluation(
+    model=model,
+    test_loader=test_loader,
+    device='cuda',
+    horizons=['15m', '30m', '60m', '2h', '4h']
+)
+
+# Generate report
+report = format_evaluation_report(results)
+print(report)
+
+# Calibration analysis
+calibration = CalibrationByHorizon(n_quantiles=7)
+calibration_results = calibration.analyze(
+    predictions=results['predictions'],
+    targets=results['targets'],
+    horizons=results['horizons']
+)
+
+# Multi-horizon backtesting
+backtester = MultiHorizonBacktester()
+backtest_results = backtester.backtest_all_horizons(
+    predictions=results['predictions'],
+    targets=results['targets'],
+    horizons=results['horizons']
 )
 ```
 
@@ -453,7 +578,7 @@ trainer.fit(
 ### Ablation Studies (Planned)
 
 | Configuration              | Modification                | Expected Impact          |
-|----------------------------|----------------------------|-----------------------------|
+|----------------------------|----------------------------|------------------------------|
 | No Variable Embedding      | Standard timestep tokens   | ↓ IC (entangled)            |
 | No Two-Stage Attention     | Single attention stage     | ↑ compute, ↓ performance    |
 | No Instance Normalization  | LayerNorm only             | ↓ regime adaptation         |
@@ -508,11 +633,30 @@ This is standard ML practice for time series and prevents subtle leakage through
 | 2 | ✅ Complete | Week 3 | Feature Engineering |
 | 3 | ✅ Complete | Week 4 | Dataset & DataLoader |
 | 4 | ✅ Complete | Week 5-6 | Model Implementation |
-| 5 | ⏸️ Planned | Week 7 | Training Pipeline |
-| 6 | ⏸️ Planned | Week 8 | Evaluation & Analysis |
-| 7 | ⏸️ Planned | Week 9-10 | Hyperparameter Optimization |
+| 5 | ✅ Complete | Week 7 | Training Pipeline |
+| 6 | ✅ Complete | Week 8 | Evaluation & Analysis |
 
-**Total Duration:** ~10-12 weeks (Phases 1-4 complete, 6 weeks elapsed)
+**Total Duration:** ~8 weeks (Phases 1-6 complete)
+
+## Initial Training Results
+
+**Training Configuration:**
+- Data: 10% subsample for rapid prototyping
+- Epochs: 4 (with early stopping)
+- Batch size: 128 (effective 256 with gradient accumulation)
+- Hardware: A100 GPU (80GB VRAM)
+- Training time: ~15 minutes
+
+**Results:**
+- Best validation loss: 0.014659 (epoch 3)
+- Model size: 82.7 MB
+- Status: Pipeline validated successfully
+
+**Next Steps:**
+1. Full-scale training on 100% data
+2. Extended training (50-100 epochs with early stopping)
+3. Comprehensive evaluation on test set
+4. Hyperparameter optimization (optional)
 
 ## References
 
@@ -547,6 +691,8 @@ Comprehensive documentation is available in the `/docs` folder:
 - **`dev_phase_2_documentation.md`** - Phase 2 implementation details and feature validation
 - **`dev_phase_3_documentation.md`** - Phase 3 implementation details including purge gap fixes and normalization improvements
 - **`dev_phase_4_documentation.md`** - Phase 4 implementation details including Flash Attention optimization and testing results
+- **`dev_phase_5_documentation.md`** - Phase 5 implementation details including training pipeline and loss functions
+- **`dev_phase_6_documentation.md`** - Phase 6 implementation details including evaluation metrics and backtesting
 
 ## License
 
@@ -561,4 +707,4 @@ This project is provided as-is for research and educational purposes.
 ---
 
 *Last Updated: December 2025*  
-*Project Status: Phase 4 Complete - Model Architecture Implemented*
+*Project Status: Dev Phases 1-6 Complete - Initial Training Results Obtained*
