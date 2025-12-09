@@ -6,7 +6,7 @@ Implements composite positional encodings that capture multiple temporal cycles:
 - Day-of-week: Learnable embedding for weekday patterns (Mon-Fri)
 - Day-of-month/year: Time2Vec for longer cycles (monthly, seasonal)
 
-Per scientific document Section 3.1, these encodings are added to variable
+These encodings are added to variable
 embeddings before temporal attention to provide temporal context.
 """
 
@@ -35,7 +35,7 @@ class TimeOfDayEncoding(nn.Module):
              PE(t, 2i+1) = cos(2*pi*t*k_i / 288)
     where k_i = i+1 for i=0 to half_dim-1
     
-    Strengthens Hypothesis 11 (grok-scientific.md): cyclical embeddings for
+    Strengthens Hypothesis 11: cyclical embeddings for
     intraday pattern capture including overnight-to-open transitions.
     """
     

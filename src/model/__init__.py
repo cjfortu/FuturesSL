@@ -1,10 +1,9 @@
 """
 Model package for MIGT-TVDT hybrid architecture.
 
-This package implements the distributional forecasting model for NQ futures
-as specified in the scientific document (grok-scientific.md). The architecture
-combines ideas from RL-TVDT (two-stage attention) and MIGT (gated instance
-normalization) for robust multi-horizon quantile prediction.
+This package implements the distributional forecasting model for NQ futures. 
+The architecture combines ideas from RL-TVDT (two-stage attention) and MIGT
+(gated instance normalization) for robust multi-horizon quantile prediction.
 
 Architecture Overview:
     1. RevIN normalization for regime adaptation
