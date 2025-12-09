@@ -10,6 +10,20 @@ Implementation of comprehensive evaluation framework for MIGT-TVDT distributiona
 - Rationale: SignalGenerator applies sign(median), creating binary signals from continuous predictions. The theoretical maximum correlation between a continuous variable and its sign is sqrt(2/π) ≈ 0.798, making the original 0.9 threshold mathematically unachievable
 - The observed 0.798 correlation confirms correct implementation and strong directional agreement
 
+### Fast Testing Note
+
+Test 10 (Full Integration) can be slow with full test data (~400k samples). For faster testing:
+```python
+data_module = NQDataModule(
+    data_path=data_path,
+    subsample_fraction=0.01,
+    apply_subsample_to_all_splits=True,  # Subsample test set too
+    subsample_seed=42
+)
+```
+
+This reduces test set from ~400k to ~4k samples for rapid integration testing.
+
 ## Delivered Components
 
 ### Core Modules

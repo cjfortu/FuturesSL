@@ -1898,7 +1898,8 @@ Default production settings:
 
 Development/tuning settings for faster iteration:
 - Increase `training.batch_size: 192` (~30% faster per epoch)
-- Set `data.subsample_fraction: 0.25` (4× fewer samples)
+- Set `data.subsample_fraction: 0.25` (4× fewer training samples)
+- For testing: Set `data.apply_subsample_to_all_splits: true` (subsamples val/test too)
 - Combined: ~5× faster for hyperparameter sweeps
 
 **Training Notebook Structure:**
@@ -1931,6 +1932,7 @@ data_module = NQDataModule(
     train_end="2021-12-31",
     val_end="2023-12-31",
     subsample_fraction=train_config['data'].get('subsample_fraction'),
+    apply_subsample_to_all_splits=train_config['data'].get('apply_subsample_to_all_splits', False),
     subsample_seed=train_config['data'].get('subsample_seed', 42)
 )
 data_module.setup()

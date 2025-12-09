@@ -204,6 +204,7 @@ class NQDataModule:
         train_end: str = "2021-12-31",
         val_end: str = "2023-12-31",
         subsample_fraction: Optional[float] = None,
+        apply_subsample_to_all_splits: bool = False,
         subsample_seed: int = 42
     ):
         """
@@ -232,8 +233,12 @@ class NQDataModule:
                 Type: str
             val_end: Validation split end date
                 Type: str
-            subsample_fraction: Use only this fraction of training samples (None = all)
+            subsample_fraction: Fraction of samples to use (None = all)
                 Type: Optional[float]
+                Range: (0.0, 1.0]
+            apply_subsample_to_all_splits: Apply subsampling to val/test (not just train)
+                Type: bool
+                Default: False (only training subsampled, val/test use full data)
             subsample_seed: Random seed for subsampling reproducibility
                 Type: int
         """
@@ -246,7 +251,16 @@ class NQDataModule:
         self.max_seq_len = max_seq_len
         self.train_end = train_end
         self.val_end = val_end
+        
+        # Validate subsample_fraction
+        if subsample_fraction is not None:
+            if not (0.0 < subsample_fraction <= 1.0):
+                raise ValueError(
+                    f"subsample_fraction must be in (0.0, 1.0], got {subsample_fraction}"
+                )
+        
         self.subsample_fraction = subsample_fraction
+        self.apply_subsample_to_all_splits = apply_subsample_to_all_splits
         self.subsample_seed = subsample_seed
         
         # Will be set in setup()
@@ -298,23 +312,51 @@ class NQDataModule:
             train_df, val_df, test_df, tolerance_hours=24
         )
         
-        # Create datasets - subsample ONLY training
-        self.train_dataset = NQFuturesDataset(
-            train_df, 
-            self.feature_cols, 
-            self.target_cols, 
-            self.preprocessor,
-            subsample_fraction=self.subsample_fraction,
-            subsample_seed=self.subsample_seed
-        )
-        self.val_dataset = NQFuturesDataset(
-            val_df, self.feature_cols, self.target_cols, self.preprocessor
-            # No subsampling for validation
-        )
-        self.test_dataset = NQFuturesDataset(
-            test_df, self.feature_cols, self.target_cols, self.preprocessor
-            # No subsampling for test
-        )
+        # Create datasets with conditional subsampling
+        # If apply_subsample_to_all_splits=True, apply subsample_fraction to all splits
+        # Otherwise, apply only to training (default behavior for backward compatibility)
+        if self.apply_subsample_to_all_splits:
+            # Apply same fraction to all splits
+            self.train_dataset = NQFuturesDataset(
+                train_df, 
+                self.feature_cols, 
+                self.target_cols, 
+                self.preprocessor,
+                subsample_fraction=self.subsample_fraction,
+                subsample_seed=self.subsample_seed
+            )
+            self.val_dataset = NQFuturesDataset(
+                val_df, 
+                self.feature_cols, 
+                self.target_cols, 
+                self.preprocessor,
+                subsample_fraction=self.subsample_fraction,
+                subsample_seed=self.subsample_seed
+            )
+            self.test_dataset = NQFuturesDataset(
+                test_df, 
+                self.feature_cols, 
+                self.target_cols, 
+                self.preprocessor,
+                subsample_fraction=self.subsample_fraction,
+                subsample_seed=self.subsample_seed
+            )
+        else:
+            # Default behavior: subsample only training
+            self.train_dataset = NQFuturesDataset(
+                train_df, 
+                self.feature_cols, 
+                self.target_cols, 
+                self.preprocessor,
+                subsample_fraction=self.subsample_fraction,
+                subsample_seed=self.subsample_seed
+            )
+            self.val_dataset = NQFuturesDataset(
+                val_df, self.feature_cols, self.target_cols, self.preprocessor
+            )
+            self.test_dataset = NQFuturesDataset(
+                test_df, self.feature_cols, self.target_cols, self.preprocessor
+            )
         
         print(f"\nDataset sizes:")
         print(f"  Train: {len(self.train_dataset):,}")

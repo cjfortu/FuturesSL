@@ -49,5 +49,6 @@ data:
   pin_memory: true
   prefetch_factor: 2
   persistent_workers: true
-  subsample_fraction: 0.20       # default "null". e.g., 0.25 for 25% of training samples
+  subsample_fraction: 0.10       # default "null". e.g., 0.25 for 25% of training samples
   subsample_seed: 42
+  apply_subsample_to_all_splits: true  # Set true for fast testing (applies subsample_fraction to val/test too)

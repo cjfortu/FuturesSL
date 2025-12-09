@@ -8,6 +8,52 @@
 
 ## Updates & Changes
 
+### Update 5: apply_subsample_to_all_splits Parameter
+
+**Date:** December 2025  
+**Purpose:** Enable fast testing/evaluation by subsampling all splits uniformly
+
+**Problem:** `subsample_fraction` only affected training data. Phase 6 Test 10 needed small test sets for quick integration testing but loaded full 2025 test data (~400k samples).
+
+**Solution:**
+
+Added `apply_subsample_to_all_splits` boolean flag to `NQDataModule.__init__`:
+
+```python
+apply_subsample_to_all_splits: bool = False  # When True, applies subsample_fraction to all splits
+```
+
+**Features:**
+- **Validation**: `subsample_fraction` must be in (0.0, 1.0]
+- **Clear semantics**: Single parameter + boolean flag (no silent overrides)
+- **Backward compatible**: Default `False` preserves existing behavior
+
+**Behavior:**
+- `apply_subsample_to_all_splits=False` (default): only training subsampled
+- `apply_subsample_to_all_splits=True`: train/val/test all use `subsample_fraction`
+
+**Usage:**
+```python
+# Fast testing - subsample all splits to 1%
+data_module = NQDataModule(
+    data_path=path,
+    subsample_fraction=0.01,
+    apply_subsample_to_all_splits=True,
+    subsample_seed=42
+)
+```
+
+**Config:**
+```yaml
+data:
+  subsample_fraction: 0.20  # Existing parameter
+  apply_subsample_to_all_splits: false  # New parameter (default: false)
+```
+
+**API Compatibility:** No breaking changes - new optional boolean parameter with safe default
+
+---
+
 ### Update 4: DataLoader Optimization (prefetch_factor, persistent_workers)
 
 **Date:** December 2025  
