@@ -685,10 +685,6 @@ This is standard practice for time series ML and prevents subtle leakage through
 - **Reports:** JSON metrics, CSV summaries, PNG visualizations
 
 ### Documentation
-- **Research Guide:** `gemini-research.md` - State-of-the-art literature review
-- **Scientific Document:** `grok-scientific.md` - Hypotheses and mathematical frameworks
-- **Engineering Guide:** `claude-engineering.md` - Detailed implementation specifications
-- **Phase Documentation:** `dev_phase_1-6_documentation.md` - Per-phase implementation records
 - **Evaluation Report:** `evaluation_report.md` - Comprehensive test results
 
 ## References
@@ -722,11 +718,6 @@ FuturesSL/
 ├── configs/
 │   ├── model_config.yaml              # Model architecture configuration
 │   └── training_config.yaml           # Training hyperparameters
-├── docs/
-│   ├── gemini-research.md             # Research guide
-│   ├── grok-scientific.md             # Scientific document
-│   ├── claude-engineering.md          # Engineering specifications
-│   └── dev_phase_*_documentation.md   # Phase-specific documentation
 ├── src/
 │   ├── data/
 │   │   ├── data_loader.py             # Data loading and aggregation
