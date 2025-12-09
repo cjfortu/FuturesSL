@@ -1,16 +1,16 @@
 # FuturesSL: Distributional Forecasting for NASDAQ Futures
 
 **Author:** Clemente Fortuna  
-**Project Status:** Dev Phases 1-6 Complete - Initial Training Results Obtained
+**Project Status:** Complete (Dev Phases 1-6) - Model Trained and Evaluated
 
 ## Overview
 
 FuturesSL is a transformer-based distributional forecasting system for NASDAQ 100 (NQ) futures trading. The model predicts log-return distributions across multiple time horizons (15m, 30m, 60m, 2h, 4h) using quantile regression, providing both point forecasts and calibrated uncertainty estimates for enhanced risk management.
 
 This project implements a novel hybrid architecture combining:
-- **Variable Embeddings** from RL-TVDT [1] for improved multivariate dependency modeling
+- **Variable Embeddings** from RL-TVDT for improved multivariate dependency modeling
 - **Two-Stage Attention** decoupling temporal and cross-variable dynamics
-- **Gated Instance Normalization** from MIGT [2] for non-stationary financial data
+- **Gated Instance Normalization** from MIGT for non-stationary financial data
 - **Quantile Regression** for distributional outputs with calibrated prediction intervals
 - **Flash Attention** for memory-efficient training on A100 GPUs
 
@@ -24,6 +24,20 @@ Traditional point-forecast models fail to capture the uncertainty inherent in fi
 4. **Regime Adaptation:** Instance normalization handles non-stationary market regimes
 
 ## Technical Architecture
+
+### Model Architecture Diagram
+
+![MIGT-TVDT Architecture](https://github.com/cjfortu/FuturesSL/blob/master/evaluation_results/migt_tvdt_architecture.png)
+
+The architecture implements a hybrid MIGT-TVDT design with the following key stages:
+
+1. **Preprocessing Layer**: Reversible Instance Normalization (RevIN) with padding to T_max=288
+2. **Variable Embedding Layer**: Per-variable linear projection preserving temporal dimension
+3. **Positional Encodings**: Composite multi-scale temporal encoding (time-of-day, day-of-week, day-of-month, day-of-year)
+4. **Stage 1 - Temporal Attention**: Self-attention over time dimension for each variable independently (4 layers)
+5. **Stage 2 - Variable Attention**: Cross-variable attention with Gated Instance Normalization (2 layers)
+6. **Multi-Horizon Quantile Heads**: Horizon-specific decoders producing 7 quantiles per horizon
+7. **Training Loss**: Pinball loss with monotonicity constraint
 
 ### Data Pipeline
 
@@ -54,44 +68,23 @@ Key preprocessing steps:
 
 All features computed causally to prevent lookahead bias.
 
-### Model Architecture
+### Architecture Specifications
 
-```
-Input: (Batch, Time=273-276, Variables=24)
-  ↓ Padding + Masking → (Batch, 288, 24)
-  ↓ Variable Embedding → (Batch, 24, D_model)
-  ↓ Positional Encoding (Composite 96D → 256D)
-     - Time-of-day: Sinusoidal (32D)
-     - Day-of-week: Learnable (16D)
-     - Day-of-month: Time2Vec (16D)
-     - Day-of-year: Time2Vec (32D)
-  
-[Temporal Attention Stage] (4 layers)
-  For each variable independently:
-    ↓ Self-Attention over time dimension (Flash Attention)
-    ↓ Feed-forward network + residual
-    ↓ Attention-weighted pooling → (Batch, 24, D_model)
-  
-[Variable Attention Stage] (2 layers)
-  ↓ Cross-attention between variables (Flash Attention)
-  ↓ Gated Instance Normalization (RevIN + LGU)
-  ↓ Feed-forward network + residual
-  
-[Multi-Horizon Quantile Heads]
-  For each horizon h ∈ {15m, 30m, 60m, 2h, 4h}:
-    ↓ Horizon embedding
-    ↓ MLP decoder
-    ↓ Output: 7 quantiles (τ = 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95)
-    ↓ Cumulative softplus (guaranteed non-crossing)
-```
-
-**Architecture Parameters:**
+**Model Parameters:**
 - d_model: 256
 - n_heads: 8 (32D per head)
 - d_ff: 1024
 - dropout: 0.1
 - Temporal layers: 4
 - Variable layers: 2
+- Total parameters: 6.87M
+
+**Input Dimensions:**
+- Batch size: 128 (effective 256 with gradient accumulation)
+- Sequence length: 288 timesteps (padded from 273-276)
+- Variables: 24 features
+- Horizons: 5 (15m, 30m, 60m, 2h, 4h)
+- Quantiles: 7 per horizon
 
 **Key Design Choices:**
 
@@ -118,7 +111,9 @@ Total: 96D projected to d_model=256 via learned linear layer.
 
 ## Implementation Status
 
-### ✅ Phase 1: Data Acquisition & Preprocessing (Complete)
+All six development phases have been completed:
+
+### ✅ Phase 1: Data Acquisition & Preprocessing
 
 **Deliverables:**
 - `data_loader.py` - 1-minute to 5-minute aggregation
@@ -136,7 +131,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - ✓ Chronological ordering verified
 - ✓ Price positivity enforced
 
-### ✅ Phase 2: Feature Engineering (Complete)
+### ✅ Phase 2: Feature Engineering
 
 **Deliverables:**
 - `feature_engineering.py` - 24 causal features + 5 targets
@@ -161,7 +156,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 | 2h      | 0.000064    | 0.00365 | 0.96        |
 | 4h      | 0.000128    | 0.00515 | 0.97        |
 
-### ✅ Phase 3: Dataset & DataLoader Implementation (Complete)
+### ✅ Phase 3: Dataset & DataLoader Implementation
 
 **Deliverables:**
 - `preprocessing.py` - Window creation, normalization, temporal splits with purge gaps
@@ -178,7 +173,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 **Split Statistics:**
 
 | Split | Date Range | Samples | % |
-|-------|-----------|---------|---------|
+|-------|-----------|---------|----|
 | Train | 2010-06-07 to 2021-12-31 | ~580K | 70% |
 | Val | 2022-01-02 to 2023-12-31 | ~164K | 20% |
 | Test | 2024-01-02 to 2025-12-03 | ~85K | 10% |
@@ -189,7 +184,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - Total purged: ~576 bars (~0.05% of data)
 - Rationale: Prevents validation/test lookback windows from overlapping with train data
 
-### ✅ Phase 4: Model Architecture Implementation (Complete)
+### ✅ Phase 4: Model Architecture Implementation
 
 **Deliverables:**
 - `positional_encodings.py` - Composite positional encoding with Time2Vec
@@ -207,7 +202,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - Batch size 128 achieves ~70GB VRAM usage (88% A100 utilization, safe margin for training)
 - All 10 test suites passing (architecture, positional encoding, attention mechanisms, quantile heads, save/load, integration)
 - Phase 3 integration verified (dataset outputs compatible with model inputs)
-- Model parameters: ~10-40M (varies with configuration)
+- Model parameters: 6.87M
 
 **Memory Profile (Flash Attention, A100 80GB):**
 - Batch size 64: 35.44 GB (44% utilization)
@@ -221,7 +216,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - Non-crossing quantile outputs via cumulative softplus parameterization
 - Full PyTorch 2.0+ SDPA compatibility
 
-### ✅ Phase 5: Training Pipeline (Complete)
+### ✅ Phase 5: Training Pipeline
 
 **Deliverables:**
 - `loss_functions.py` - Quantile regression loss with per-quantile/horizon breakdowns
@@ -238,14 +233,19 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - **Gradient Clipping:** Global norm clipping at 1.0
 - **Early Stopping:** Patience 10 epochs, min delta 1e-5
 - **Checkpointing:** Latest, best, and top-3 epoch checkpoints
-- **Optional WandB Integration:** For experiment tracking
+- **WandB Integration:** For experiment tracking
 
-**Initial Training Results (10% Subsample, 4 Epochs):**
-- **Training Duration:** ~15 minutes on A100 (with 10% data subsample)
-- **Best Epoch:** 3 (val_loss: 0.014659)
-- **Model Size:** 82.7 MB
-- **Training Approach:** Rapid prototyping run to validate pipeline
-- **Next Steps:** Full-scale training on 100% data for production model
+**Training Configuration:**
+- Data: 10% subsample for prototyping validation
+- Epochs: 4 (best at epoch 3)
+- Batch size: 128 (effective 256 with gradient accumulation)
+- Hardware: A100 GPU (80GB VRAM)
+- Training time: ~15 minutes
+
+**Training Results:**
+- Best validation loss: 0.014659 (epoch 3)
+- Model size: 82.7 MB
+- Status: Pipeline validated successfully
 
 **Metrics Computed:**
 - Per-quantile coverage (calibration check)
@@ -253,7 +253,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - Mean interval widths (50% and 80%)
 - Per-quantile and per-horizon loss breakdowns
 
-### ✅ Phase 6: Evaluation & Analysis (Complete)
+### ✅ Phase 6: Evaluation & Analysis
 
 **Deliverables:**
 - `metrics.py` - Distributional (CRPS, calibration), point (IC, DA), and financial metrics (Sharpe, MDD)
@@ -261,6 +261,7 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - `backtest.py` - Signal generation and multi-horizon backtesting
 - `inference.py` - Model prediction and evaluation pipeline
 - `06_evaluation.ipynb` - Comprehensive testing notebook
+- `06_production_evaluation.ipynb` - Production evaluation execution
 
 **Distributional Metrics:**
 - **CRPS:** Continuous Ranked Probability Score (approximated via quantile loss)
@@ -291,23 +292,90 @@ Total: 96D projected to d_model=256 via learned linear layer.
 - **PIT Histograms:** Probability Integral Transform uniformity check
 - **Coverage by Horizon:** Per-horizon calibration breakdown
 
+## Performance Results
+
+### Test Set Evaluation Metrics
+
+**Evaluated on 13,599 test samples (10% subsample)**
+
+#### Distributional Metrics
+
+| Horizon | CRPS | PICP-80 | PICP-50 | MPIW-80 | MPIW-50 |
+|---------|---------|---------|---------|---------|---------|
+| 15m | 0.03331 | 0.000 | 0.000 | 0.00689 | 0.00314 |
+| 30m | 0.00144 | 0.169 | 0.026 | 0.00772 | 0.00315 |
+| 60m | 0.00869 | 0.001 | 0.000 | 0.00755 | 0.00346 |
+| 2h | 0.01238 | 0.003 | 0.001 | 0.00652 | 0.00294 |
+| 4h | 0.00431 | 0.030 | 0.017 | 0.00487 | 0.00254 |
+
+**Note:** Low PICP values indicate miscalibration, suggesting the model produces overly narrow prediction intervals in this prototyping run. Full-scale training expected to improve calibration.
+
+#### Point Metrics (Median Predictions)
+
+| Horizon | IC | DA | RMSE | MAE |
+|---------|---------|-------|----------|----------|
+| 15m | 0.0011 | 0.517 | 0.07021 | 0.07016 |
+| 30m | -0.0060 | 0.518 | 0.00488 | 0.00447 |
+| 60m | -0.0014 | 0.529 | 0.02135 | 0.02116 |
+| 2h | -0.0226 | 0.536 | 0.02702 | 0.02668 |
+| 4h | -0.0260 | 0.545 | 0.01087 | 0.00989 |
+
+**Directional Accuracy** ranges from 51.7% to 54.5%, showing slight edge over random (50%).
+
+#### Backtest Results (Gross Returns)
+
+| Horizon | Sharpe | Sortino | Max DD | Profit Factor | Hit Rate | Calmar | Total Return | Trades |
+|---------|--------|---------|--------|---------------|----------|--------|--------------|--------|
+| 15m | 2.09 | 2.97 | 6.95% | 1.052 | 51.7% | 5.80 | 26.4% | 13,599 |
+| 30m | 2.42 | 3.37 | 15.6% | 1.059 | 51.8% | 4.58 | 45.1% | 13,599 |
+| 60m | 1.44 | 1.95 | 29.4% | 1.034 | 52.9% | 1.81 | 34.3% | 13,599 |
+| 2h | 1.94 | 2.64 | 50.4% | 1.046 | 53.6% | 2.46 | 74.6% | 13,599 |
+| 4h | 3.31 | 4.52 | 70.7% | 1.076 | 54.5% | 9.11 | 300.1% | 13,599 |
+
+**Key Observations:**
+- **Best Sharpe:** 4h horizon (3.31) demonstrates strongest risk-adjusted performance
+- **Trade-off:** Longer horizons show higher returns but larger drawdowns
+- **Profit Factors:** All > 1.0 indicating profitable backtests (gross, pre-costs)
+- **Hit Rates:** Modest edge (51.7-54.5%) consistent with IC results
+
+**Calibration Summary:**
+- Mean calibration error: 0.4721
+- Max calibration error: 0.8539
+- **Status:** Requires recalibration via full-scale training or post-hoc temperature scaling
+
+### Interpretation
+
+These results are from a **prototyping run** (10% data subsample, 4 epochs) designed to validate the complete pipeline. The model demonstrates:
+
+1. **Functional architecture** - All components integrate correctly
+2. **Positive signal** - Directional accuracy > 50%, positive Sharpe ratios
+3. **Calibration issues** - Narrow prediction intervals (low PICP) require addressing
+4. **Horizon patterns** - Longer horizons show stronger performance metrics
+
+**Recommended Next Steps:**
+1. Full-scale training on 100% data
+2. Extended epochs (50-100 with early stopping)
+3. Calibration tuning (temperature scaling or recalibration layer)
+4. Transaction cost modeling for realistic backtest returns
+5. Hyperparameter optimization (learning rate, architecture depth)
+
 ## Compute Environment
 
 **Primary:** Google Colab with A100 GPU (80GB VRAM)  
 **Secondary Resources:** 167.1 GB RAM, 12 CPU cores  
 **Storage:** Google Drive integration for data persistence
 
-Memory profile estimates:
-- Model parameters: ~10-40M
+**Memory Profile:**
+- Model parameters: 6.87M
 - Forward pass (B=128): ~70 GB
 - Training overhead (Adam + gradients): +3 GB
 - Total training memory: ~73 GB (91% utilization, safe margin)
-- Gradient checkpointing: Not required (sufficient headroom, would add ~20% training time)
+- Gradient checkpointing: Not required (sufficient headroom)
 
-**Optimal Batch Sizes (research-backed):**
+**Optimal Batch Sizes:**
 - Primary: 128 (optimal for financial time series, fits comfortably)
 - Alternative: 64 (more gradient noise, useful for exploration)
-- Avoid: >180 (overfitting risk, exceeds memory, no performance gain)
+- Avoid: >180 (exceeds memory, no performance gain)
 
 ## Installation & Setup
 
@@ -322,14 +390,10 @@ pandas >= 2.0.0
 
 ### Dependencies
 
-```bash
-pip install -r requirements.txt
-```
-
 Key packages:
 - **Data:** `databento`, `pyarrow`, `fastparquet`
 - **Model:** `torch`, `einops`
-- **Training:** `wandb`, `tensorboard`, `optuna`
+- **Training:** `wandb`, `tensorboard`
 - **Evaluation:** `scipy`, `scikit-learn`, `matplotlib`, `seaborn`
 
 ### Google Colab Setup
@@ -360,14 +424,14 @@ print(f"CUDA: {torch.version.cuda}")
 /content/drive/MyDrive/Colab Notebooks/Transformers/FP/
 ├── data/
 │   ├── raw/
-│   │   ├── nq_ohlcv_1m_raw.parquet          # User-provided 1-min data
+│   │   ├── nq_ohlcv_1m_raw.parquet          # 1-min data from Databento
 │   │   └── rollover_dates.csv               # Generated metadata
 │   ├── interim/
 │   │   ├── nq_ohlcv_5min_aggregated.parquet
 │   │   └── nq_ohlcv_5min_adjusted.parquet
 │   └── processed/
 │       ├── nq_features_full.parquet         # 24 features + 5 targets
-│       ├── train_samples.parquet            # Phase 3+ (optional)
+│       ├── train_samples.parquet
 │       ├── val_samples.parquet
 │       ├── test_samples.parquet
 │       └── column_info.csv
@@ -378,28 +442,9 @@ print(f"CUDA: {torch.version.cuda}")
 │   └── training_curves.png                  # Visualization
 ├── src/
 │   ├── data/
-│   │   ├── data_loader.py
-│   │   ├── rollover_adjustment.py
-│   │   ├── feature_engineering.py
-│   │   ├── preprocessing.py
-│   │   └── dataset.py
 │   ├── model/
-│   │   ├── positional_encodings.py
-│   │   ├── embeddings.py
-│   │   ├── temporal_attention.py
-│   │   ├── variable_attention.py
-│   │   ├── gated_instance_norm.py
-│   │   ├── quantile_heads.py
-│   │   └── migt_tvdt.py
 │   ├── training/
-│   │   ├── loss_functions.py
-│   │   ├── scheduler.py
-│   │   └── trainer.py
 │   └── evaluation/
-│       ├── metrics.py
-│       ├── calibration.py
-│       ├── backtest.py
-│       └── inference.py
 ├── configs/
 │   ├── model_config.yaml
 │   └── training_config.yaml
@@ -410,12 +455,15 @@ print(f"CUDA: {torch.version.cuda}")
     ├── 04_model_testing.ipynb
     ├── 05_training.ipynb
     ├── 05_full_training.ipynb
-    └── 06_evaluation.ipynb
+    ├── 06_evaluation.ipynb
+    └── 06_production_evaluation.ipynb
 ```
 
 ## Usage
 
-### Phase 1-3: Data Preparation
+### Data Preparation (Phases 1-3)
+
+Run notebooks `01_data_acquisition.ipynb`, `02_preprocessing.ipynb`, `03_dataset_preparation.ipynb` to run testing plus execution, or simply:  
 
 ```python
 from src.data import DataLoader, RolloverAdjuster, FeatureEngineer
@@ -431,13 +479,10 @@ df_5min = loader.aggregate_to_5min()
 # Apply rollover adjustment
 adjuster = RolloverAdjuster.from_data(df_5min, threshold_pct=0.01, threshold_std=3.0)
 df_adjusted = adjuster.adjust_prices(df_5min)
-adjuster.verify_returns_preserved(df_5min, df_adjusted)
 
-# Compute features
+# Compute features and targets
 engineer = FeatureEngineer()
 df_features = engineer.compute_all_features(df_adjusted)
-
-# Add target variables
 horizons = {'15m': 3, '30m': 6, '60m': 12, '2h': 24, '4h': 48}
 df_final = engineer.add_targets(df_features, horizons)
 
@@ -448,13 +493,12 @@ data_module = NQDataModule(
     num_workers=4
 )
 data_module.setup()
-
-train_loader = data_module.train_dataloader()
-val_loader = data_module.val_dataloader()
-test_loader = data_module.test_dataloader()
 ```
 
-### Phase 4: Model Instantiation
+### Model Instantiation (Phase 4)
+
+Run notebook `04_model_testing.ipynb` to run testing.  
+To execute, simply run:  
 
 ```python
 from src.model import MIGT_TVDT
@@ -469,19 +513,18 @@ model = MIGT_TVDT(config['model'])
 
 # Model summary
 print(f"Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
-print(f"Trainable: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.2f}M")
 
-# Forward pass example
-batch = next(iter(train_loader))
-features = batch['features']  # (B, T, V)
-mask = batch['mask']          # (B, T)
-temporal_info = batch['temporal_info']  # dict with positional encoding inputs
-
-predictions = model(features, mask, temporal_info)
-# predictions: (B, n_horizons, n_quantiles) = (B, 5, 7)
+# Forward pass
+batch = next(iter(data_module.train_dataloader()))
+predictions = model(batch['features'], batch['mask'], batch['temporal_info'])
+# predictions: (B, n_horizons=5, n_quantiles=7)
 ```
 
-### Phase 5: Model Training
+### Model Training (Phase 5)
+
+For testing run `05_training.ipynb`.  
+For execution run `05_full_training.ipynb`.  
+The core training code is:  
 
 ```python
 from src.training import QuantileLoss, Trainer
@@ -500,20 +543,23 @@ trainer = Trainer(
 
 # Train with validation monitoring
 trainer.fit(
-    train_loader=train_loader,
-    val_loader=val_loader,
+    train_loader=data_module.train_dataloader(),
+    val_loader=data_module.val_dataloader(),
     epochs=100,
     early_stopping_patience=10,
     checkpoint_dir='/path/to/checkpoints'
 )
 ```
 
-### Phase 6: Model Evaluation
+### Model Evaluation (Phase 6)
+
+For testing run `06_evaluation.ipynb`.  
+For execution run `06_production_evaluation.ipynb`.  
+The core eval/analysis code is:  
 
 ```python
 from src.evaluation import run_evaluation, format_evaluation_report
 from src.evaluation import CalibrationByHorizon, MultiHorizonBacktester
-import torch
 
 # Load best checkpoint
 checkpoint = torch.load('/path/to/checkpoint_best.pt')
@@ -523,12 +569,12 @@ model.eval()
 # Run comprehensive evaluation
 results = run_evaluation(
     model=model,
-    test_loader=test_loader,
+    test_loader=data_module.test_dataloader(),
     device='cuda',
     horizons=['15m', '30m', '60m', '2h', '4h']
 )
 
-# Generate report
+# Generate evaluation report
 report = format_evaluation_report(results)
 print(report)
 
@@ -549,20 +595,6 @@ backtest_results = backtester.backtest_all_horizons(
 )
 ```
 
-## Performance Metrics
-
-### ML Metrics
-- **Information Coefficient (IC):** Spearman correlation (predicted vs. actual)
-- **Directional Accuracy (DA):** Sign prediction accuracy
-- **CRPS:** Continuous Ranked Probability Score (distributional quality)
-- **Calibration Error:** Deviation from nominal coverage
-
-### Financial Metrics
-- **Sharpe Ratio:** Annualized risk-adjusted returns (target > 1.5 gross)
-- **Maximum Drawdown:** Peak-to-trough decline
-- **Profit Factor:** Gross wins / gross losses
-- **Tail Metrics:** 5th/95th percentile coverage accuracy
-
 ## Scientific Foundations
 
 ### Key Hypotheses
@@ -575,16 +607,16 @@ backtest_results = backtester.backtest_all_horizons(
 
 **H4 (Temporal Cycles):** Composite positional encodings capture intraday, weekly, and seasonal patterns missed by standard sinusoidal encodings.
 
-### Ablation Studies (Planned)
+### Future Ablation Studies
 
-| Configuration              | Modification                | Expected Impact          |
-|----------------------------|----------------------------|------------------------------|
-| No Variable Embedding      | Standard timestep tokens   | ↓ IC (entangled)            |
-| No Two-Stage Attention     | Single attention stage     | ↑ compute, ↓ performance    |
-| No Instance Normalization  | LayerNorm only             | ↓ regime adaptation         |
-| No Gating (LGU)            | Remove gate mechanism      | ↑ noise, wider intervals    |
-| Point Prediction (MSE)     | MSE loss instead of QR     | No uncertainty, ↑ CRPS      |
-| Manual Attention           | Disable Flash Attention    | ↑ memory (77GB), ↓ batch    |
+| Configuration | Modification | Expected Impact |
+|---------------|-------------|-----------------|
+| No Variable Embedding | Standard timestep tokens | ↓ IC (entangled) |
+| No Two-Stage Attention | Single attention stage | ↑ compute, ↓ performance |
+| No Instance Normalization | LayerNorm only | ↓ regime adaptation |
+| No Gating (LGU) | Remove gate mechanism | ↑ noise, wider intervals |
+| Point Prediction (MSE) | MSE loss instead of QR | No uncertainty, ↑ CRPS |
+| Manual Attention | Disable Flash Attention | ↑ memory (77GB), ↓ batch |
 
 ## Data Considerations
 
@@ -610,7 +642,7 @@ All derived features use strictly historical data:
 - Exponential moving averages: `ewm(span=n, adjust=False)`
 - Target variables: Computed with `.shift(-h)` but dropped during training
 
-**Critical:** The 24-hour lookback window contains only historical bars. Target computation uses future data for labeling but these columns are excluded from model inputs.
+The 24-hour lookback window contains only historical bars. Target computation uses future data for labeling but these columns are excluded from model inputs.
 
 ### Data Leakage Prevention
 
@@ -623,40 +655,41 @@ All derived features use strictly historical data:
 - Val window at 2022-01-02 00:00 looks back 24h to 2022-01-01 00:00
 - No overlap with train data (ends Dec 31)
 
-This is standard ML practice for time series and prevents subtle leakage through temporal context mixing.
+This is standard practice for time series ML and prevents subtle leakage through temporal context mixing.
 
 ## Development Timeline
 
 | Phase | Status | Duration | Objective |
 |-------|--------|----------|-----------|
-| 1 | ✅ Complete | Week 1-2 | Data Acquisition & Preprocessing |
-| 2 | ✅ Complete | Week 3 | Feature Engineering |
-| 3 | ✅ Complete | Week 4 | Dataset & DataLoader |
-| 4 | ✅ Complete | Week 5-6 | Model Implementation |
-| 5 | ✅ Complete | Week 7 | Training Pipeline |
-| 6 | ✅ Complete | Week 8 | Evaluation & Analysis |
+| 1 | ✅ Complete | Week 1 | Data Acquisition & Preprocessing |
+| 2 | ✅ Complete | Week 2 | Feature Engineering |
+| 3 | ✅ Complete | Week 3 | Dataset & DataLoader |
+| 4 | ✅ Complete | Week 4 | Model Implementation |
+| 5 | ✅ Complete | Week 5 | Training Pipeline |
+| 6 | ✅ Complete | Week 6 | Evaluation & Analysis |
 
-**Total Duration:** ~8 weeks (Phases 1-6 complete)
+**Total Duration:** ~6 weeks (All phases complete)
 
-## Initial Training Results
+## Project Outputs
 
-**Training Configuration:**
-- Data: 10% subsample for rapid prototyping
-- Epochs: 4 (with early stopping)
-- Batch size: 128 (effective 256 with gradient accumulation)
-- Hardware: A100 GPU (80GB VRAM)
-- Training time: ~15 minutes
+### Trained Model
+- **Checkpoint:** `checkpoint_best.pt` (82.7 MB)
+- **Parameters:** 6.87M
+- **Training:** 4 epochs on 10% data subsample
+- **Validation Loss:** 0.014659
 
-**Results:**
-- Best validation loss: 0.014659 (epoch 3)
-- Model size: 82.7 MB
-- Status: Pipeline validated successfully
+### Evaluation Results
+- **Metrics:** CRPS, IC, DA, Sharpe, Sortino, Calmar ratios
+- **Calibration:** Reliability diagrams, PIT histograms
+- **Backtest:** Multi-horizon strategy evaluation
+- **Reports:** JSON metrics, CSV summaries, PNG visualizations
 
-**Next Steps:**
-1. Full-scale training on 100% data
-2. Extended training (50-100 epochs with early stopping)
-3. Comprehensive evaluation on test set
-4. Hyperparameter optimization (optional)
+### Documentation
+- **Research Guide:** `gemini-research.md` - State-of-the-art literature review
+- **Scientific Document:** `grok-scientific.md` - Hypotheses and mathematical frameworks
+- **Engineering Guide:** `claude-engineering.md` - Detailed implementation specifications
+- **Phase Documentation:** `dev_phase_1-6_documentation.md` - Per-phase implementation records
+- **Evaluation Report:** `evaluation_report.md` - Comprehensive test results
 
 ## References
 
@@ -680,19 +713,62 @@ This is standard ML practice for time series and prevents subtle leakage through
 
 [10] B. Lim et al., "Temporal Fusion Transformers for Interpretable Multi-horizon Time Series Forecasting," *International Journal of Forecasting*, 2021.
 
-## Documentation
+## Repository Structure
 
-Comprehensive documentation is available in the `/docs` folder:
-
-- **`gemini-research.md`** - Research guide covering state-of-the-art transformer architectures, distributional forecasting methods, and quantitative finance foundations
-- **`grok-scientific.md`** - Scientific document detailing market behavior hypotheses, mathematical frameworks, and architectural concepts
-- **`claude-engineering.md`** - Engineering implementation guide with detailed specifications and phased development plan
-- **`dev_phase_1_documentation.md`** - Phase 1 implementation details and testing results
-- **`dev_phase_2_documentation.md`** - Phase 2 implementation details and feature validation
-- **`dev_phase_3_documentation.md`** - Phase 3 implementation details including purge gap fixes and normalization improvements
-- **`dev_phase_4_documentation.md`** - Phase 4 implementation details including Flash Attention optimization and testing results
-- **`dev_phase_5_documentation.md`** - Phase 5 implementation details including training pipeline and loss functions
-- **`dev_phase_6_documentation.md`** - Phase 6 implementation details including evaluation metrics and backtesting
+```
+FuturesSL/
+├── README.md                          # This file
+├── .gitignore                         # Git ignore patterns
+├── configs/
+│   ├── model_config.yaml              # Model architecture configuration
+│   └── training_config.yaml           # Training hyperparameters
+├── docs/
+│   ├── gemini-research.md             # Research guide
+│   ├── grok-scientific.md             # Scientific document
+│   ├── claude-engineering.md          # Engineering specifications
+│   └── dev_phase_*_documentation.md   # Phase-specific documentation
+├── src/
+│   ├── data/
+│   │   ├── data_loader.py             # Data loading and aggregation
+│   │   ├── rollover_adjustment.py     # Futures contract rollover
+│   │   ├── feature_engineering.py     # Feature computation
+│   │   ├── preprocessing.py           # Window creation and normalization
+│   │   └── dataset.py                 # PyTorch Dataset and DataModule
+│   ├── model/
+│   │   ├── positional_encodings.py    # Multi-scale temporal encodings
+│   │   ├── embeddings.py              # Variable embeddings
+│   │   ├── temporal_attention.py      # Per-variable temporal attention
+│   │   ├── variable_attention.py      # Cross-variable attention
+│   │   ├── gated_instance_norm.py     # RevIN + LGU normalization
+│   │   ├── quantile_heads.py          # Multi-horizon quantile decoders
+│   │   └── migt_tvdt.py               # Complete model architecture
+│   ├── training/
+│   │   ├── loss_functions.py          # Quantile regression loss
+│   │   ├── scheduler.py               # Learning rate scheduling
+│   │   └── trainer.py                 # Training orchestration
+│   └── evaluation/
+│       ├── metrics.py                 # Distributional and financial metrics
+│       ├── calibration.py             # Calibration analysis
+│       ├── backtest.py                # Multi-horizon backtesting
+│       └── inference.py               # Prediction pipeline
+├── notebooks/
+│   ├── 01_data_acquisition.ipynb      # Phase 1 testing
+│   ├── 02_preprocessing.ipynb         # Phase 2 testing
+│   ├── 03_dataset_preparation.ipynb   # Phase 3 testing
+│   ├── 04_model_testing.ipynb         # Phase 4 testing
+│   ├── 05_training.ipynb              # Phase 5 testing
+│   ├── 05_full_training.ipynb         # Production training
+│   ├── 06_evaluation.ipynb            # Phase 6 testing
+│   └── 06_production_evaluation.ipynb # Production evaluation
+└── evaluation_results/
+    ├── metrics.json                   # Evaluation metrics
+    ├── calibration.json               # Calibration results
+    ├── backtest.json                  # Backtest results
+    ├── predictions_targets.npz        # Model predictions and targets
+    ├── evaluation_report.md           # Formatted report
+    ├── migt_tvdt_architecture.png     # Architecture diagram
+    └── *.png, *.csv                   # Visualizations and summaries
+```
 
 ## License
 
@@ -706,5 +782,5 @@ This project is provided as-is for research and educational purposes.
 
 ---
 
-*Last Updated: December 2025*  
-*Project Status: Dev Phases 1-6 Complete - Initial Training Results Obtained*
+*Project Completed: December 2025*  
+*Status: All 6 Development Phases Complete - Model Trained and Evaluated*
