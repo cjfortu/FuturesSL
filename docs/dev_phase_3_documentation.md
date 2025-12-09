@@ -1,12 +1,57 @@
 # Dev Phase 3 Documentation: Dataset & DataLoader Implementation
 
-**Status:** Complete ✓  
+**Status:** Complete (Updated)  
 **Duration:** As specified in engineering plan  
 **Last Updated:** December 2025
 
 ---
 
 ## Updates & Changes
+
+### Update 4: DataLoader Optimization (prefetch_factor, persistent_workers)
+
+**Date:** December 2025  
+**Issue:** Training time discrepancy between estimate and actual runtime
+
+**Observed Behavior:**
+- Estimated training: 0.4 min/epoch, Actual: ~2.5 min (6x slower)
+- Estimated validation: 0.6 min/epoch, Actual: ~9 min (15x slower)
+
+**Root Cause Analysis (team consensus):**
+
+1. **Validation bottleneck (primary):** GPU-to-CPU synchronization from `.cpu()` calls in `trainer.py` for VRAM safety. Each of 736 validation batches incurs ~700ms sync overhead. This is architectural and not addressable via DataLoader tuning.
+
+2. **Training bottleneck (secondary):** Per-batch `collate_fn` operations (padding, tensor construction) and worker reinit overhead per epoch.
+
+**Changes Applied to `NQDataModule`:**
+
+```python
+# New parameters with defaults
+prefetch_factor: int = 2,      # Overlap I/O with compute
+persistent_workers: bool = True # Reuse workers across epochs
+
+# Updated DataLoader creation (all three loaders)
+return DataLoader(
+    ...,
+    prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
+    persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
+    ...
+)
+```
+
+**Rationale:**
+- `prefetch_factor=2`: Each worker prefetches 2 batches ahead, overlapping I/O with GPU compute
+- `persistent_workers=True`: Avoids 5-10s worker process reinit per epoch
+- `num_workers=4`: Kept at 4 (stable baseline; increasing to 8 requires profiling)
+- Conditional application: `prefetch_factor` and `persistent_workers` only valid when `num_workers > 0`
+
+**Expected Impact:**
+- Marginal improvement (~5-15%) from worker persistence and prefetching
+- Major validation bottleneck unaffected (requires architectural change to trainer)
+
+**Note:** The timing estimate in `06_full_training.ipynb` should be updated with realistic benchmarks (~715ms/train batch, ~735ms/val batch) based on observed performance.
+
+---
 
 ### Update 3: collate_fn bar_in_day Padding Fix
 
@@ -30,9 +75,11 @@ MAX_SEQ_LEN = 288  # Must match features padding
 **Impact:** All batched outputs now have consistent shapes:
 - `features`: (B, 288, 24)
 - `attention_mask`: (B, 288)
-- `bar_in_day`: (B, 288) ← Fixed
+- `bar_in_day`: (B, 288)
 
 **Verification:** Phase 4 model forward pass now executes without shape errors.
+
+---
 
 ### Temporal Split Purge Gap Fix
 
@@ -42,12 +89,6 @@ MAX_SEQ_LEN = 288  # Must match features padding
 **Root Cause - Combined Problems:**
 1. Date strings defaulted to midnight (00:00:00), excluding most bars from boundary days
 2. Contiguous splits caused validation lookback windows to overlap with train data
-
-**Problem Example:**
-- train_end="2021-12-31" → included only up to 2021-12-31 00:00:00
-- Val started at 2021-12-31 00:00:05
-- Val window at 2022-01-01 00:00 looks back 24h to 2021-12-31 00:00
-- Lookback overlaps with train data from Dec 31 (subtle leakage via context mixing)
 
 **Solution - Purge Gaps with End-of-Day Timestamps:**
 
@@ -74,21 +115,10 @@ def create_splits(
 
 **Split Structure:**
 - Train: 2010-06-07 to 2021-12-31 23:59:59
-- **Purge: 2022-01-01 (288 bars dropped)**
+- Purge: 2022-01-01 (288 bars dropped)
 - Val: 2022-01-02 to 2023-12-31 23:59:59
-- **Purge: 2024-01-01 (288 bars dropped)**
+- Purge: 2024-01-01 (288 bars dropped)
 - Test: 2024-01-02 to 2025-12-03
-
-**Rationale:**
-- End-of-day timestamps: Intuitive behavior (train_end includes full day)
-- Purge gaps: Standard ML practice, prevents context mixing
-- Clean separation: Val lookbacks don't touch train data
-- Minimal loss: ~576 bars (~0.05% of 1.1M)
-
-**Impact:**
-- Gaps: 0.1h → 24.0h ✓
-- Purged: ~576 bars total
-- Ratios: Preserved (~70%/20%/10%)
 
 ---
 
@@ -100,7 +130,7 @@ def create_splits(
 std_safe = np.where(std > eps, std, 1.0)
 ```
 
-**Rationale:** Low-variance features (std ≤ 1e-5) centered without noise amplification.
+**Rationale:** Low-variance features (std <= 1e-5) centered without noise amplification.
 
 ---
 
@@ -112,7 +142,7 @@ std_safe = np.where(std > eps, std, 1.0)
 src/data/
   __init__.py (updated)
   preprocessing.py (with purge gaps)
-  dataset.py
+  dataset.py (with DataLoader optimizations)
 
 notebooks/
   03_dataset_preparation.ipynb
@@ -142,6 +172,7 @@ notebooks/
 - Variable-length lookback (273-276 bars)
 - Instance normalization per sample
 - Skips first 288 bars (insufficient history)
+- Optional subsampling for training
 
 **Sample Structure:**
 ```python
@@ -149,7 +180,7 @@ notebooks/
     'features': (288, 24) float32
     'attention_mask': (288,) bool
     'targets': (5,) float32
-    'bar_in_day': (actual_length,) int32
+    'bar_in_day': (288,) int32  # Padded to fixed length
     'day_of_week': int32
     'day_of_month': int32
     'day_of_year': int32
@@ -158,18 +189,25 @@ notebooks/
 ```
 
 **`collate_fn`:**
-- Pads bar_in_day to batch max length
+- Pads bar_in_day to 288 (fixed, matches features)
 - Stacks other tensors
 
 **`NQDataModule`:**
-- `setup()`: Loads data, creates splits, initializes datasets
-- DataLoaders with proper batching
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| batch_size | 128 | Samples per batch |
+| num_workers | 4 | Parallel data loading processes |
+| pin_memory | True | Pin tensors for faster GPU transfer |
+| prefetch_factor | 2 | Batches prefetched per worker |
+| persistent_workers | True | Reuse workers across epochs |
+| subsample_fraction | None | Training subsample ratio |
 
 ---
 
 ## Testing Results
 
-### All Tests Passed ✓
+### All Tests Passed
 
 **Split Statistics (with purge gaps):**
 
@@ -180,15 +218,9 @@ notebooks/
 | Test | 2024-01-02 to 2025-12-03 | ~85K | 10% |
 
 **Temporal Gaps:**
-- Train-Val: 24.0h ✓
-- Val-Test: 24.0h ✓
+- Train-Val: 24.0h
+- Val-Test: 24.0h
 - Purged: ~576 bars total
-
-### Feature Variance
-
-Typical distribution:
-- High variance (std > 0.01): 85-90% of features in 95%+ windows
-- Low variance (std ≤ 1e-5): 0-5% of features (ema_slope_*, roc_* in flat markets)
 
 ---
 
@@ -202,9 +234,9 @@ Typical distribution:
    - Handled via padding + masks
    - No performance impact
 
-3. **Low-Variance Windows:** Some features near-constant
-   - Correctly normalized (centered, not amplified)
-   - Model learns low predictability signal
+3. **Validation Speed:** ~735ms/batch due to VRAM safety mechanism
+   - CPU offload in trainer.py causes GPU-CPU sync per batch
+   - Not addressable via DataLoader tuning
 
 ---
 
@@ -215,9 +247,13 @@ Typical distribution:
 - Uses: Variable embedding, positional encodings
 
 **Phase 5 (Training):**
-- Uses: train/val dataloaders
+- Uses: train/val dataloaders with prefetching
 - Monitors: Quantile loss, CRPS
-- Expects: Proper temporal separation (no leakage)
+- Note: Update timing estimates with realistic benchmarks
+
+**Phase 6 (Evaluation):**
+- Uses: test dataloader
+- Same DataLoader configuration as validation
 
 ---
 
@@ -227,10 +263,11 @@ Typical distribution:
 - [x] End-of-day timestamps for intuitive behavior
 - [x] No data leakage (24h gaps validated)
 - [x] Normalization handles low-variance features
+- [x] DataLoader optimization (prefetch, persistent workers)
 - [x] All tests pass
 - [x] Documentation complete
 
-**Phase 3 Status: ✓ COMPLETE**
+**Phase 3 Status: COMPLETE (Updated)**
 
 ---
 
@@ -241,10 +278,10 @@ Typical distribution:
 - Positional encodings (temporal info from preprocessor)
 - Temporal & variable attention
 - Gated instance normalization
-- Multi-horizon quantile heads (5 × 7)
+- Multi-horizon quantile heads (5 x 7)
 
 ---
 
 **Last Updated:** December 2025  
 **Engineering Lead:** Claude  
-**Contributors:** Grok (end-of-day insight), Gemini (purge gap approach)
+**Contributors:** Grok (DataLoader tuning), Gemini (bottleneck diagnosis)

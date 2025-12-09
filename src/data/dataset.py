@@ -198,37 +198,56 @@ class NQDataModule:
         batch_size: int = 128,
         num_workers: int = 4,
         pin_memory: bool = True,
+        prefetch_factor: int = 2,
+        persistent_workers: bool = True,
         max_seq_len: int = 288,
         train_end: str = "2021-12-31",
         val_end: str = "2023-12-31",
-        subsample_fraction: Optional[float] = None,  # NEW
-        subsample_seed: int = 42                      # NEW
+        subsample_fraction: Optional[float] = None,
+        subsample_seed: int = 42
     ):
         """
         Initialize data module.
         
         Args:
             data_path: Path to feature parquet file
+                Type: Path
             feature_cols: Feature column names (auto-detect if None)
+                Type: Optional[List[str]]
             target_cols: Target column names (auto-detect if None)
+                Type: Optional[List[str]]
             batch_size: Batch size for training
-            num_workers: DataLoader workers
-            pin_memory: Pin memory for GPU transfer
+                Type: int
+            num_workers: DataLoader workers for parallel data loading
+                Type: int
+            pin_memory: Pin memory for faster GPU transfer
+                Type: bool
+            prefetch_factor: Batches to prefetch per worker (overlaps I/O with compute)
+                Type: int
+            persistent_workers: Reuse workers across epochs (avoids reinit overhead)
+                Type: bool
             max_seq_len: Maximum sequence length for padding
+                Type: int
             train_end: Training split end date
+                Type: str
             val_end: Validation split end date
+                Type: str
             subsample_fraction: Use only this fraction of training samples (None = all)
+                Type: Optional[float]
             subsample_seed: Random seed for subsampling reproducibility
+                Type: int
         """
         self.data_path = Path(data_path)
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.prefetch_factor = prefetch_factor
+        self.persistent_workers = persistent_workers
         self.max_seq_len = max_seq_len
         self.train_end = train_end
         self.val_end = val_end
-        self.subsample_fraction = subsample_fraction  # NEW
-        self.subsample_seed = subsample_seed          # NEW
+        self.subsample_fraction = subsample_fraction
+        self.subsample_seed = subsample_seed
         
         # Will be set in setup()
         self.df = None
@@ -285,8 +304,8 @@ class NQDataModule:
             self.feature_cols, 
             self.target_cols, 
             self.preprocessor,
-            subsample_fraction=self.subsample_fraction,  # NEW
-            subsample_seed=self.subsample_seed            # NEW
+            subsample_fraction=self.subsample_fraction,
+            subsample_seed=self.subsample_seed
         )
         self.val_dataset = NQFuturesDataset(
             val_df, self.feature_cols, self.target_cols, self.preprocessor
@@ -303,36 +322,57 @@ class NQDataModule:
         print(f"  Test:  {len(self.test_dataset):,}")
     
     def train_dataloader(self) -> DataLoader:
-        """Training dataloader with shuffling."""
+        """
+        Training dataloader with shuffling.
+        
+        Returns:
+            DataLoader: Training data loader with shuffle=True, drop_last=True
+        """
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
+            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
             collate_fn=collate_fn,
             drop_last=True  # Drop incomplete batch for stable training
         )
     
     def val_dataloader(self) -> DataLoader:
-        """Validation dataloader without shuffling."""
+        """
+        Validation dataloader without shuffling.
+        
+        Returns:
+            DataLoader: Validation data loader with shuffle=False
+        """
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
+            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
             collate_fn=collate_fn
         )
     
     def test_dataloader(self) -> DataLoader:
-        """Test dataloader without shuffling."""
+        """
+        Test dataloader without shuffling.
+        
+        Returns:
+            DataLoader: Test data loader with shuffle=False
+        """
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=self.pin_memory,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else None,
+            persistent_workers=self.persistent_workers if self.num_workers > 0 else False,
             collate_fn=collate_fn
         )
     

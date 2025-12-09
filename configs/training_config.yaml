@@ -4,7 +4,7 @@
 training:
   batch_size: 192               # Default 128 optimal for financial time series, increased for runtime purposes only
   gradient_accumulation_steps: 2 # Effective batch = 256
-  max_epochs: 2                # Default is 100, reduced for runtime purposes only
+  max_epochs: 4                # Default is 100, reduced for runtime purposes only
   early_stopping_patience: 10
   early_stopping_metric: val_loss
   mixed_precision: true         # Enable AMP for A100 optimization
@@ -45,8 +45,9 @@ logging:
   val_check_interval: 1.0       # Validate every epoch
 
 data:
-  num_workers: 4
+  num_workers: 8   # default 4
   pin_memory: true
   prefetch_factor: 2
-  subsample_fraction: 0.25       # default "null". e.g., 0.25 for 25% of training samples
+  persistent_workers: true
+  subsample_fraction: 0.20       # default "null". e.g., 0.25 for 25% of training samples
   subsample_seed: 42
