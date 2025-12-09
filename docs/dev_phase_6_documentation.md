@@ -5,6 +5,17 @@ Implementation of comprehensive evaluation framework for MIGT-TVDT distributiona
 
 ### Updates and Changes
 
+**2024-12-09: Production Evaluation Config Handling**
+- Fixed config value extraction in `06_production_evaluation.ipynb` cell 11 (report generation)
+- Issue: `subsample_fraction: null` in YAML becomes `None` in Python; `dict.get(key, default)` returns `None` when key exists with `None` value, not the default
+- Solution: Defensive extraction pattern to handle both missing keys and `None` values:
+  ```python
+  data_config = checkpoint['config'].get('data', {})
+  subsample_frac = data_config.get('subsample_fraction') or 1.0
+  ```
+- Rationale: YAML `null` indicates "unset" configuration, which should default to 1.0 (100% data usage) in production contexts
+- No module changes required; purely notebook-level handling
+
 **2024-12-08: Test Threshold Correction**
 - Fixed Test 6 correlation threshold from 0.9 to 0.75
 - Rationale: SignalGenerator applies sign(median), creating binary signals from continuous predictions. The theoretical maximum correlation between a continuous variable and its sign is sqrt(2/π) ≈ 0.798, making the original 0.9 threshold mathematically unachievable
@@ -52,8 +63,10 @@ This reduces test set from ~400k to ~4k samples for rapid integration testing.
    - `run_evaluation()`: Complete evaluation pipeline
    - `format_evaluation_report()`: Markdown report generation
 
-### Testing
-- **`notebooks/07_evaluation.ipynb`**: Comprehensive unit and integration tests
+### Notebooks
+
+- **`notebooks/06_evaluation.ipynb`**: Comprehensive unit and integration tests
+- **`notebooks/06_production_evaluation.ipynb`**: Production evaluation on trained model
 
 ## Implementation Details
 
@@ -171,6 +184,21 @@ results = run_evaluation(model, dataloader, quantiles, horizon_names)
 report = format_evaluation_report(results)
 ```
 
+## Config Handling Best Practices
+
+When accessing checkpoint configurations in notebooks:
+
+```python
+# GOOD: Defensive extraction handles None and missing keys
+data_config = checkpoint['config'].get('data', {})
+subsample_frac = data_config.get('subsample_fraction') or 1.0
+
+# BAD: Fails when key exists with None value
+subsample_frac = checkpoint['config']['data'].get('subsample_fraction', 1.0) * 100  # TypeError if None
+```
+
+**Rationale**: YAML `null` values become Python `None`. The `dict.get(key, default)` method only returns the default when the key is **missing**, not when it exists with value `None`. Using `or 1.0` provides a fallback for both cases.
+
 ## Metric Interpretation Guide
 
 ### Distributional Quality
@@ -237,4 +265,4 @@ All 10 test suites passing:
 4. Single-asset focus (no portfolio metrics)
 
 ## Next Steps
-Proceed to Dev Phase 7: Hyperparameter Optimization & Deployment
+Proceed to production deployment and continuous monitoring of model performance.

@@ -3,7 +3,7 @@
 training:
   batch_size: 128              # Default 128 optimal for financial time series, increased for runtime purposes only
   gradient_accumulation_steps: 2 # Effective batch = 256
-  max_epochs: 10                # Default is 100, reduced for runtime purposes only
+  max_epochs: 1                # Default is 100, reduced for runtime purposes only
   early_stopping_patience: 10
   early_stopping_metric: val_loss
   mixed_precision: true         # Enable AMP for A100 optimization
