@@ -3,6 +3,13 @@
 ## Overview
 Implementation of comprehensive evaluation framework for MIGT-TVDT distributional forecasting model per scientific document Section 7 and engineering specification Section 6.
 
+### Updates and Changes
+
+**2024-12-08: Test Threshold Correction**
+- Fixed Test 6 correlation threshold from 0.9 to 0.75
+- Rationale: SignalGenerator applies sign(median), creating binary signals from continuous predictions. The theoretical maximum correlation between a continuous variable and its sign is sqrt(2/π) ≈ 0.798, making the original 0.9 threshold mathematically unachievable
+- The observed 0.798 correlation confirms correct implementation and strong directional agreement
+
 ## Delivered Components
 
 ### Core Modules
